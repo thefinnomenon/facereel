@@ -1,5 +1,5 @@
 import { A, useParams } from "@solidjs/router";
-import { Download, LoaderCircle, Share2, XCircle } from "lucide-solid";
+import { Clock, Download, LoaderCircle, Share2, XCircle } from "lucide-solid";
 import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { Badge, Button, Panel, trackUiEvent } from "../../../components/ui.tsx";
 
@@ -10,6 +10,8 @@ type PublicJob = {
   progress: number;
   step: string;
   queuePosition: number | null;
+  estimatedWaitSeconds: number | null;
+  estimatedReadySeconds: number | null;
   igPostCount: number | null;
   scanCount: number;
   downloadedCount: number;
@@ -164,6 +166,13 @@ export default function StatusPage() {
                 <p class="status-current-text">{progressDetailText(current())}</p>
               </Show>
 
+              <Show when={current().status !== "completed" && current().status !== "failed"}>
+                <p class="message message-inline status-wait-message">
+                  <Clock size={18} />
+                  <span>{waitMessage(current())}</span>
+                </p>
+              </Show>
+
               <Show when={current().status === "completed"}>
                 <div class="admin-grid compact-grid">
                   <Metric label="Instagram photos" value={current().igPostCount ?? current().scanCount} />
@@ -238,7 +247,7 @@ function activeStatusText(job: PublicJob): string {
 }
 
 function progressDetailText(job: PublicJob): string {
-  if (job.status === "queued") return "Waiting to start scanning Instagram.";
+  if (job.status === "queued") return queueDetailText(job);
   if (job.status === "failed") return "Processing stopped before the FaceReel could be completed.";
   if (job.step === "Finding photos" || job.step === "Instagram verified" || job.step === "Job created") return "Looking through Instagram photos.";
   if (job.step === "Scanning faces") {
@@ -248,6 +257,20 @@ function progressDetailText(job: PublicJob): string {
   if (job.step === "Downloading matches" || job.step === "Aligning faces") return foundFaceText(job);
   if (job.step === "Rendering video") return "Rendering the final vertical MP4.";
   return job.step;
+}
+
+function queueDetailText(job: PublicJob): string {
+  const position = job.queuePosition;
+  const wait = formatEstimate(job.estimatedWaitSeconds);
+  if (position && position > 1) return wait ? `You're #${position} in line. Estimated wait: ${wait}.` : `You're #${position} in line.`;
+  if (position === 1) return "You're next in line.";
+  return "Waiting to start scanning Instagram.";
+}
+
+function waitMessage(job: PublicJob): string {
+  const ready = formatEstimate(job.estimatedReadySeconds);
+  const estimate = ready ? ` It should be ready in about ${ready}.` : "";
+  return `This page updates automatically, but you do not need to wait here.${estimate} We'll email you when your FaceReel is ready.`;
 }
 
 function foundInstagramText(job: PublicJob): string {
@@ -279,6 +302,18 @@ function formatDuration(value: unknown): string {
   const remainingSeconds = seconds % 60;
   if (minutes <= 0) return `${remainingSeconds}s`;
   return `${minutes}m ${remainingSeconds}s`;
+}
+
+function formatEstimate(value: unknown): string {
+  if (value == null) return "";
+  const seconds = Math.max(0, Math.round(Number(value) || 0));
+  if (!seconds) return "";
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (!remainingMinutes) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  return `${hours} hour${hours === 1 ? "" : "s"} ${remainingMinutes} minute${remainingMinutes === 1 ? "" : "s"}`;
 }
 
 function formatDate(value: string | null): string {

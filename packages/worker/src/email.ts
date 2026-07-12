@@ -1,4 +1,4 @@
-import { logError, trackEvent } from "@facereel/db";
+import { logError, logWarn, trackEvent } from "@facereel/db";
 import { appUrl } from "./validation.ts";
 
 type EmailInput = {
@@ -14,17 +14,33 @@ type ProcessingEmailInput = EmailInput & {
 };
 
 export async function sendProcessingEmail(input: ProcessingEmailInput): Promise<void> {
+  const statusUrl = `${appUrl()}/status/${input.jobId}`;
   const queueText = queueSummaryText(input);
   const queueHtml = queueSummaryHtml(input);
   await sendEmail({
     to: input.to,
-    subject: input.estimatedWaitSeconds && input.estimatedWaitSeconds > 0 ? "Your FaceReel is queued" : "Your FaceReel is processing",
-    text: `Your FaceReel for @${input.username} was submitted.\n\n${queueText}\n\nStatus: ${appUrl()}/status/${input.jobId}`,
+    subject: input.estimatedWaitSeconds && input.estimatedWaitSeconds > 0 ? "Your FaceReel is queued" : "We're creating your FaceReel",
+    text: [
+      `Your FaceReel for @${input.username} was submitted.`,
+      "",
+      queueText,
+      "",
+      "This usually takes 5-10 minutes on the server.",
+      "You do not need to keep the status page open. We'll email you again as soon as the video is ready.",
+      "Please keep the Instagram profile public until processing finishes.",
+      "",
+      `You can follow the progress here: ${statusUrl}`
+    ].join("\n"),
     html: `
-      <h1 style="font-size:22px">Your FaceReel was submitted</h1>
-      <p>We received your FaceReel for @${escapeHtml(input.username)}.</p>
-      ${queueHtml}
-      <p><a href="${appUrl()}/status/${input.jobId}">View status</a></p>
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#17202a">
+        <h1 style="font-size:22px">We're creating your FaceReel</h1>
+        <p>Your FaceReel for <strong>@${escapeHtml(input.username)}</strong> was submitted.</p>
+        ${queueHtml}
+        <p>This usually takes 5-10 minutes on the server.</p>
+        <p>You do not need to keep the status page open. We'll email you again as soon as the video is ready.</p>
+        <p>Please keep the Instagram profile public until processing finishes.</p>
+        <p><a href="${statusUrl}" style="display:inline-block;background:#17202a;color:white;padding:12px 16px;border-radius:6px;text-decoration:none">View Status</a></p>
+      </div>
     `,
     event: "processing_email_sent",
     jobId: input.jobId,
@@ -33,14 +49,21 @@ export async function sendProcessingEmail(input: ProcessingEmailInput): Promise<
 }
 
 export async function sendReadyEmail(input: EmailInput): Promise<void> {
+  const statusUrl = `${appUrl()}/status/${input.jobId}`;
   await sendEmail({
     to: input.to,
     subject: "Your FaceReel is ready",
-    text: `Your FaceReel for @${input.username} is ready.\n\nDownload it here: ${appUrl()}/status/${input.jobId}`,
+    text: [
+      `Your FaceReel for @${input.username} is ready.`,
+      "",
+      `Watch and download it here: ${statusUrl}`
+    ].join("\n"),
     html: `
-      <h1 style="font-size:22px">Your FaceReel is ready</h1>
-      <p>Your FaceReel for @${escapeHtml(input.username)} is ready.</p>
-      <p><a href="${appUrl()}/status/${input.jobId}">Download video</a></p>
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#17202a">
+        <h1 style="font-size:22px">Your FaceReel is ready</h1>
+        <p>Your FaceReel for <strong>@${escapeHtml(input.username)}</strong> is ready.</p>
+        <p><a href="${statusUrl}" style="display:inline-block;background:#17202a;color:white;padding:12px 16px;border-radius:6px;text-decoration:none">Watch and Download</a></p>
+      </div>
     `,
     event: "ready_email_sent",
     jobId: input.jobId,
@@ -83,7 +106,16 @@ async function sendEmail(input: {
   user: string;
 }): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) return;
+  if (!apiKey) {
+    logWarn({
+      event: "email_skipped",
+      jobId: input.jobId,
+      user: input.user,
+      message: "RESEND_API_KEY is not set; email was skipped.",
+      metadata: { attemptedEvent: input.event, subject: input.subject }
+    });
+    return;
+  }
 
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
