@@ -174,6 +174,17 @@ a {
   line-height: 1.35;
 }
 
+.status-wait-message {
+  margin-top: 14px;
+  align-items: flex-start;
+  max-width: 760px;
+}
+
+.status-wait-message svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
 .form-panel {
   padding: 24px;
 }
