@@ -203,7 +203,7 @@ export default function StatusPage() {
                     <Show when={downloadLoading()} fallback={<Download size={17} />}>
                       <LoaderCircle class="spin" size={17} />
                     </Show>
-                    Download MP4
+                    Download video
                   </Button>
                   <Button type="button" variant="secondary" onClick={shareVideo}>
                     <Share2 size={17} />
@@ -255,7 +255,7 @@ function progressDetailText(job: PublicJob): string {
     return "Preparing photos for face matching.";
   }
   if (job.step === "Downloading matches" || job.step === "Aligning faces") return foundFaceText(job);
-  if (job.step === "Rendering video") return "Rendering the final vertical MP4.";
+  if (job.step === "Rendering video") return "Creating your shareable video.";
   return job.step;
 }
 
