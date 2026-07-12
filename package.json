@@ -1,0 +1,41 @@
+{
+  "name": "facereel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "app",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n app,worker -c cyan,magenta \"npm run dev:app\" \"npm run dev:worker\"",
+    "dev:nvm": "zsh -lc 'unset npm_config_prefix && source ~/.nvm/nvm.sh && nvm use && npm run dev'",
+    "dev:app": "npm --workspace app run dev",
+    "dev:worker": "npm run worker",
+    "build": "npm run build --workspaces --if-present",
+    "build:nvm": "zsh -lc 'unset npm_config_prefix && source ~/.nvm/nvm.sh && nvm use && npm run build'",
+    "start": "npm --workspace app run start",
+    "worker": "tsx packages/worker/src/cli.ts",
+    "db:init": "tsx packages/db/src/init.ts",
+    "test:check": "tsx scripts/test-check.ts",
+    "test:download": "tsx scripts/test-download.ts",
+    "test:facereel": "tsx scripts/test-facereel.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:nvm": "zsh -lc 'unset npm_config_prefix && source ~/.nvm/nvm.sh && nvm use && npm run typecheck'"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.32",
+    "concurrently": "^10.0.3",
+    "playwright": "^1.61.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs-node": "^4.22.0",
+    "@vladmandic/face-api": "^1.7.15",
+    "better-sqlite3": "^11.10.0",
+    "dotenv": "^16.5.0",
+    "sharp": "^0.34.2"
+  }
+}

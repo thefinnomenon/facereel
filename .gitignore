@@ -1,0 +1,15 @@
+node_modules
+.vinxi
+.output
+app/.vinxi
+app/.output
+dist
+storage
+tmp
+.env
+.DS_Store
+*.log
+
+# Personal local test images; never publish these files.
+/scripts/hero.jpeg
+/scripts/social-mosaic.jpg
