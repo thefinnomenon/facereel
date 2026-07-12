@@ -128,7 +128,7 @@ export default function LandingPage() {
         <Panel class="form-panel">
           <div class="panel-header">
             <h1>Create a face-aligned reel from Instagram photos.</h1>
-            <p class="lede">Upload one target face, enter a public Instagram handle, and get a vertical MP4.</p>
+            <p class="lede">Upload one target face, enter a public Instagram handle, and get a shareable video.</p>
           </div>
 
           <form class="form-grid" onSubmit={submit}>

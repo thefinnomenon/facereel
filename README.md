@@ -1,6 +1,6 @@
 # FaceReel MVP
 
-FaceReel creates a vertical face-aligned MP4 from public Instagram photos.
+FaceReel creates a shareable face-aligned video from public Instagram photos.
 
 Flow:
 
