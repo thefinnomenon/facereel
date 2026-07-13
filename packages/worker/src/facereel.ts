@@ -19,6 +19,7 @@ const TARGET_EYE_Y = 720;
 const MAX_ALIGNMENT_ROTATION_DEGREES = 38;
 const MIN_ALIGNMENT_SCALE = 0.35;
 const MAX_ALIGNMENT_SCALE = 2.4;
+const WATERMARK_TEXT = "FaceReel.net";
 let modelsLoaded = false;
 let faceapiModule: typeof import("@vladmandic/face-api") | null = null;
 let tfModule: typeof import("@tensorflow/tfjs-node") | null = null;
@@ -232,7 +233,10 @@ export async function mockGenerateFaceReel(input: {
         }
       }
     })
-      .composite([{ input: Buffer.from(`<svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg"><circle cx="${WIDTH / 2}" cy="720" r="190" fill="#f6d8c8"/><circle cx="470" cy="680" r="20"/><circle cx="610" cy="680" r="20"/></svg>`), top: 0, left: 0 }])
+      .composite([
+        { input: Buffer.from(`<svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg"><circle cx="${WIDTH / 2}" cy="720" r="190" fill="#f6d8c8"/><circle cx="470" cy="680" r="20"/><circle cx="610" cy="680" r="20"/></svg>`), top: 0, left: 0 },
+        watermarkOverlay()
+      ])
       .jpeg({ quality: 90, mozjpeg: true })
       .toFile(framePath);
     framePaths.push(framePath);
@@ -382,7 +386,10 @@ async function writeAlignedFrame(sourcePath: string, detection: Detection, outpu
       background: { r: 0, g: 0, b: 0 }
     }
   })
-    .composite([{ input: visibleImage, left: visible.outputLeft, top: visible.outputTop }])
+    .composite([
+      { input: visibleImage, left: visible.outputLeft, top: visible.outputTop },
+      watermarkOverlay()
+    ])
     .jpeg({ quality: 90, mozjpeg: true })
     .toFile(outputPath);
 
@@ -502,6 +509,24 @@ function distance(a: Point, b: Point): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function watermarkOverlay(): sharp.OverlayOptions {
+  const width = 370;
+  const height = 92;
+  const svg = `
+    <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect x="0" y="0" width="${width}" height="${height}" rx="28" fill="rgba(0,0,0,0.42)"/>
+      <text x="${width / 2}" y="58" text-anchor="middle"
+        font-family="Inter, Arial, sans-serif" font-size="34" font-weight="800"
+        fill="rgba(255,255,255,0.90)" letter-spacing="0">${WATERMARK_TEXT}</text>
+    </svg>
+  `;
+  return {
+    input: Buffer.from(svg),
+    left: WIDTH - width - 42,
+    top: HEIGHT - height - 48
+  };
 }
 
 async function imageScale(fromPath: string, toPath: string): Promise<{ x: number; y: number }> {
