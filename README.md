@@ -49,7 +49,7 @@ Optional:
 - `ADMIN_EMAIL`
 - `FACEREEL_MATCH_THRESHOLD`
 - `FACEREEL_MIN_MATCHES`
-- `FACEREEL_MAX_IMAGES`
+- `FACEREEL_MAX_IMAGES` to cap Instagram scanning. Leave unset or set to `0` for no cap.
 - `FACEREEL_MOCK=1` for local mock video generation without Instagram/model files.
 
 ## Face API Models
