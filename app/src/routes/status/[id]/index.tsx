@@ -242,20 +242,27 @@ export default function StatusPage() {
                 </Show>
                 <div class="download-list download-actions">
                   <Button type="button" onClick={downloadVideo} disabled={downloadLoading()}>
-                    <Show when={downloadLoading()} fallback={<Download size={17} />}>
+                    <Show
+                      when={downloadLoading()}
+                      fallback={
+                        <>
+                          <Download class="desktop-action-icon" size={17} />
+                          <Share2 class="mobile-action-icon" size={17} />
+                        </>
+                      }
+                    >
                       <LoaderCircle class="spin" size={17} />
                     </Show>
                     <span class="desktop-action-label">Save</span>
                     <span class="mobile-action-label">Download or Share</span>
                   </Button>
-                  <Button type="button" variant="secondary" onClick={shareVideo} disabled={shareLoading()}>
+                  <Button type="button" class="desktop-share-button" variant="secondary" onClick={shareVideo} disabled={shareLoading()}>
                     <Show when={shareLoading()} fallback={<Share2 size={17} />}>
                       <LoaderCircle class="spin" size={17} />
                     </Show>
                     Share
                   </Button>
                 </div>
-                <p class="message save-hint">On iPhone, choose Save Video from the share sheet to save it to Photos.</p>
                 <Show when={current().cleanupAfter}>
                   <p class="message">Files are retained until {formatDate(current().cleanupAfter)}.</p>
                 </Show>
