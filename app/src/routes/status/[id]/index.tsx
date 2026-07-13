@@ -101,23 +101,23 @@ export default function StatusPage() {
     setDownloadLoading(true);
     setMessage("");
     try {
-      const response = await fetch(downloadUrl());
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(data.error || "Video is not ready yet.");
+      if (isMobileActionViewport()) {
+        const file = await shareableVideoFile(current);
+        if (file && navigator.share && navigator.canShare?.({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: `FaceReel for @${current.username}`,
+            text: "Tap Save Video to save this FaceReel to Photos."
+          });
+          return;
+        }
+        await saveVideoBlob(current, file);
+        return;
       }
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = `facereel-${current.username}-video.mp4`;
-      link.style.display = "none";
-      document.body.append(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      await saveVideoBlob(current);
     } catch (downloadError) {
-      setMessage(downloadError instanceof Error ? downloadError.message : "Unable to download the video.");
+      if (downloadError instanceof DOMException && downloadError.name === "AbortError") return;
+      setMessage(downloadError instanceof Error ? downloadError.message : "Unable to save the video.");
     } finally {
       setDownloadLoading(false);
     }
@@ -245,7 +245,8 @@ export default function StatusPage() {
                     <Show when={downloadLoading()} fallback={<Download size={17} />}>
                       <LoaderCircle class="spin" size={17} />
                     </Show>
-                    Download video
+                    <span class="desktop-action-label">Save</span>
+                    <span class="mobile-action-label">Download or Share</span>
                   </Button>
                   <Button type="button" variant="secondary" onClick={shareVideo} disabled={shareLoading()}>
                     <Show when={shareLoading()} fallback={<Share2 size={17} />}>
@@ -254,6 +255,7 @@ export default function StatusPage() {
                     Share
                   </Button>
                 </div>
+                <p class="message save-hint">On iPhone, choose Save Video from the share sheet to save it to Photos.</p>
                 <Show when={current().cleanupAfter}>
                   <p class="message">Files are retained until {formatDate(current().cleanupAfter)}.</p>
                 </Show>
@@ -272,10 +274,35 @@ export default function StatusPage() {
 
 async function shareableVideoFile(job: PublicJob): Promise<File | null> {
   if (!job.downloadToken) return null;
-  const response = await fetch(`/api/download/${job.downloadToken}/video?preload=1`);
-  if (!response.ok) return null;
-  const blob = await response.blob();
+  const blob = await videoBlob(job);
   return new File([blob], `facereel-${job.username}-video.mp4`, { type: "video/mp4" });
+}
+
+async function videoBlob(job: PublicJob): Promise<Blob> {
+  if (!job.downloadToken) throw new Error("Video is not ready yet.");
+  const response = await fetch(`/api/download/${job.downloadToken}/video?preload=1`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error || "Video is not ready yet.");
+  }
+  return response.blob();
+}
+
+async function saveVideoBlob(job: PublicJob, existingBlob?: Blob | null) {
+  const blob = existingBlob ?? await videoBlob(job);
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = `facereel-${job.username}-video.mp4`;
+  link.style.display = "none";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+function isMobileActionViewport(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 520px)").matches;
 }
 
 function Metric(props: { label: string; value: unknown }) {
