@@ -32,6 +32,7 @@ export default function StatusPage() {
   const [job, setJob] = createSignal<PublicJob | null>(null);
   const [error, setError] = createSignal("");
   const [downloadLoading, setDownloadLoading] = createSignal(false);
+  const [shareLoading, setShareLoading] = createSignal(false);
   const [message, setMessage] = createSignal("");
   const [displayedProgress, setDisplayedProgress] = createSignal(0);
   const videoVersion = createMemo(() => encodeURIComponent(job()?.updatedAt || String(Date.now())));
@@ -117,10 +118,21 @@ export default function StatusPage() {
   async function shareVideo() {
     const url = downloadUrl();
     const current = job();
-    if (!url || !current) return;
+    if (!url || !current || shareLoading()) return;
+    setShareLoading(true);
+    setMessage("");
     try {
       if (navigator.share) {
-        await navigator.share({ title: `FaceReel for @${current.username}`, url });
+        const file = await shareableVideoFile(current);
+        if (file && navigator.canShare?.({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: `FaceReel for @${current.username}`,
+            text: "Made with FaceReel.net"
+          });
+          return;
+        }
+        await navigator.share({ title: `FaceReel for @${current.username}`, text: "Made with FaceReel.net", url });
         return;
       }
       await navigator.clipboard.writeText(url);
@@ -128,6 +140,8 @@ export default function StatusPage() {
     } catch (shareError) {
       if (shareError instanceof DOMException && shareError.name === "AbortError") return;
       setMessage("Unable to share the video.");
+    } finally {
+      setShareLoading(false);
     }
   }
 
@@ -205,8 +219,10 @@ export default function StatusPage() {
                     </Show>
                     Download video
                   </Button>
-                  <Button type="button" variant="secondary" onClick={shareVideo}>
-                    <Share2 size={17} />
+                  <Button type="button" variant="secondary" onClick={shareVideo} disabled={shareLoading()}>
+                    <Show when={shareLoading()} fallback={<Share2 size={17} />}>
+                      <LoaderCircle class="spin" size={17} />
+                    </Show>
                     Share
                   </Button>
                 </div>
@@ -224,6 +240,14 @@ export default function StatusPage() {
       </Show>
     </div>
   );
+}
+
+async function shareableVideoFile(job: PublicJob): Promise<File | null> {
+  if (!job.downloadToken) return null;
+  const response = await fetch(`/api/download/${job.downloadToken}/video?preload=1`);
+  if (!response.ok) return null;
+  const blob = await response.blob();
+  return new File([blob], `facereel-${job.username}-video.mp4`, { type: "video/mp4" });
 }
 
 function Metric(props: { label: string; value: unknown }) {
