@@ -29,10 +29,12 @@ type PublicJob = {
 
 export default function StatusPage() {
   const params = useParams();
+  let previewVideo: HTMLVideoElement | undefined;
   const [job, setJob] = createSignal<PublicJob | null>(null);
   const [error, setError] = createSignal("");
   const [downloadLoading, setDownloadLoading] = createSignal(false);
   const [shareLoading, setShareLoading] = createSignal(false);
+  const [posterVisible, setPosterVisible] = createSignal(true);
   const [message, setMessage] = createSignal("");
   const [displayedProgress, setDisplayedProgress] = createSignal(0);
   const videoVersion = createMemo(() => encodeURIComponent(job()?.updatedAt || String(Date.now())));
@@ -56,6 +58,12 @@ export default function StatusPage() {
     const progress = job()?.progress;
     if (progress != null) requestAnimationFrame(() => setDisplayedProgress(Math.min(100, Math.max(0, Math.round(progress)))));
   });
+
+  createEffect((previousUrl) => {
+    const currentUrl = videoUrl();
+    if (currentUrl && currentUrl !== previousUrl) setPosterVisible(true);
+    return currentUrl;
+  }, "");
 
   const statusText = createMemo(() => {
     const current = job();
@@ -145,6 +153,16 @@ export default function StatusPage() {
     }
   }
 
+  async function playPreviewVideo() {
+    if (!previewVideo) return;
+    try {
+      setPosterVisible(false);
+      await previewVideo.play();
+    } catch {
+      setPosterVisible(true);
+    }
+  }
+
   return (
     <div class="page">
       <header class="topbar">
@@ -202,14 +220,24 @@ export default function StatusPage() {
               <Show when={current().status === "completed" && current().downloadToken}>
                 <Show when={videoUrl()}>
                   <div class="video-preview">
-                    <video
-                      class="result-video"
-                      src={videoUrl()}
-                      poster={posterUrl()}
-                      controls
-                      preload="metadata"
-                      playsinline
-                    />
+                    <div class="video-shell">
+                      <video
+                        ref={previewVideo}
+                        class="result-video"
+                        src={videoUrl()}
+                        poster={posterUrl()}
+                        controls
+                        preload="none"
+                        playsinline
+                        onPlay={() => setPosterVisible(false)}
+                      />
+                      <Show when={posterVisible() && posterUrl()}>
+                        <button class="video-poster-overlay" type="button" onClick={playPreviewVideo} aria-label="Play FaceReel video">
+                          <img src={posterUrl()} alt="" aria-hidden="true" />
+                          <span class="poster-play-icon" aria-hidden="true" />
+                        </button>
+                      </Show>
+                    </div>
                   </div>
                 </Show>
                 <div class="download-list download-actions">

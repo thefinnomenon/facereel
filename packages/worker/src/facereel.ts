@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import sharp from "sharp";
@@ -178,7 +178,7 @@ export async function generateFaceReel(input: {
 
   const videoPath = path.join(input.outputDir, faceReelVideoFilename);
   const posterPath = path.join(input.outputDir, faceReelPosterFilename);
-  await sharp(framePaths[0]!).jpeg({ quality: 90, mozjpeg: true }).toFile(posterPath);
+  await copyFile(framePaths[0]!, posterPath);
   input.onProgress?.({ stage: "Rendering video", progress: 0, matched_count: framePaths.length, total_count: framePaths.length });
   await renderVideo(framePaths, videoPath);
   input.onProgress?.({ stage: "Rendering video", progress: 1, matched_count: framePaths.length, total_count: framePaths.length });
@@ -244,7 +244,7 @@ export async function mockGenerateFaceReel(input: {
   }
   const videoPath = path.join(input.outputDir, faceReelVideoFilename);
   const posterPath = path.join(input.outputDir, faceReelPosterFilename);
-  await sharp(framePaths[0]!).jpeg({ quality: 90 }).toFile(posterPath);
+  await copyFile(framePaths[0]!, posterPath);
   await renderVideo(framePaths, videoPath);
   return {
     videoPath,
