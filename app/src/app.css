@@ -1017,6 +1017,12 @@ h3 {
   border-left: 21px solid white;
 }
 
+.save-hint {
+  margin-top: 8px;
+  text-align: center;
+  font-size: 14px;
+}
+
 .stat-grid {
   display: grid;
   gap: 10px;
@@ -1038,6 +1044,10 @@ h3 {
 
 .download-actions {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mobile-action-label {
+  display: none;
 }
 
 .table-wrap {
@@ -1148,6 +1158,14 @@ td {
 
   .button {
     width: 100%;
+  }
+
+  .desktop-action-label {
+    display: none;
+  }
+
+  .mobile-action-label {
+    display: inline;
   }
 
   .icon-button {
