@@ -269,7 +269,7 @@ export async function processRenderJob(jobId: string): Promise<ProcessResult> {
     await sendPendingEmail(jobId, "COMPLETION");
     return "COMPLETED";
   } catch (error) {
-    const classified = classify(error);
+    const classified = classifyRenderError(error);
     await markJobFailure(jobId, classified);
     if (!classified.retryable) await sendPendingEmail(jobId, "FAILURE");
     return classified.retryable ? "RETRY" : "TERMINAL";
@@ -335,7 +335,7 @@ function createProgressReporter(jobId: string) {
 function renderError(code: string, message: string, retryable: boolean) {
   return Object.assign(new Error(message), { code, retryable });
 }
-function classify(error: unknown) {
+export function classifyRenderError(error: unknown) {
   const value = error as {
     code?: string;
     retryable?: boolean;

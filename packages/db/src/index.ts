@@ -222,6 +222,9 @@ export async function markJobFailure(
               },
             }
           : {
+              project: {
+                update: { status: "FAILED" },
+              },
               emails: {
                 upsert: {
                   where: {
