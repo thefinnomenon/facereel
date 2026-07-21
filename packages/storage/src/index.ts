@@ -5,6 +5,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 
 export type StoredObject = { bucket: string; key: string; sizeBytes: number; etag?: string; contentType?: string };
+export type SignedDownloadOptions = { downloadFilename?: string };
 export interface ObjectStorage {
   put(key: string, body: Buffer | NodeJS.ReadableStream, contentType: string): Promise<StoredObject>;
   uploadFile(key: string, filePath: string, contentType: string): Promise<StoredObject>;
@@ -13,7 +14,7 @@ export interface ObjectStorage {
   delete(key: string): Promise<void>;
   copy(sourceKey: string, destinationKey: string): Promise<void>;
   signedUploadUrl(key: string, contentType: string, expiresSeconds?: number): Promise<string>;
-  signedDownloadUrl(key: string, expiresSeconds?: number): Promise<string>;
+  signedDownloadUrl(key: string, expiresSeconds?: number, options?: SignedDownloadOptions): Promise<string>;
 }
 
 function required(name: string): string { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }
@@ -30,7 +31,14 @@ export function createR2Storage(): ObjectStorage {
     async delete(key) { await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })); },
     async copy(sourceKey, destinationKey) { await client.send(new CopyObjectCommand({ Bucket: bucket, Key: destinationKey, CopySource: `${bucket}/${encodeURIComponent(sourceKey).replaceAll("%2F", "/")}` })); },
     signedUploadUrl(key, contentType, expiresSeconds = 900) { return getSignedUrl(client, new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType }), { expiresIn: Math.min(expiresSeconds, 3600) }); },
-    signedDownloadUrl(key, expiresSeconds = 900) { return getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: Math.min(expiresSeconds, 3600) }); }
+    signedDownloadUrl(key, expiresSeconds = 900, options) {
+      const downloadFilename = options?.downloadFilename?.replace(/[^a-zA-Z0-9._-]/g, "_");
+      return getSignedUrl(client, new GetObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        ...(downloadFilename ? { ResponseContentDisposition: `attachment; filename="${downloadFilename}"` } : {}),
+      }), { expiresIn: Math.min(expiresSeconds, 3600) });
+    }
   };
 }
 

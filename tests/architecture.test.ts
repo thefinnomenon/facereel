@@ -36,3 +36,13 @@ test("render outputs use deterministic project and job scoped R2 keys", async ()
   assert.match(worker, /projects\/\$\{job\.projectId\}\/renders\/\$\{jobId\}\/outputs\/master\.mp4/);
   assert.match(worker, /createMany\([\s\S]*skipDuplicates: true/);
 });
+
+test("completed status presents the video and keeps the poster internal to the player", async () => {
+  const statusPage = await readFile(new URL("../app/app/status/[id]/page.tsx", import.meta.url), "utf8");
+  assert.match(statusPage, /<video/);
+  assert.match(statusPage, /poster=\{posterUrl/);
+  assert.match(statusPage, /navigator\.share/);
+  assert.match(statusPage, /Download video/);
+  assert.match(statusPage, /Share video/);
+  assert.doesNotMatch(statusPage, /View poster/);
+});

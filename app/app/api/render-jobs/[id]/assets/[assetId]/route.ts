@@ -7,7 +7,8 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string; assetId: string }> },
 ) {
-  const token = new URL(request.url).searchParams.get("access") || (await cookies()).get("facereel_access")?.value;
+  const requestUrl = new URL(request.url);
+  const token = requestUrl.searchParams.get("access") || (await cookies()).get("facereel_access")?.value;
   if (!token) return new Response("Not authorized", { status: 401 });
   const { id, assetId } = await params;
   const asset = await prisma.renderedAsset.findFirst({
@@ -18,7 +19,14 @@ export async function GET(
     },
   });
   if (!asset) return new Response("Not found", { status: 404 });
+  const downloadFilename = requestUrl.searchParams.get("download") === "1" && asset.assetType === "MASTER_VIDEO"
+    ? `facereel-${id}.mp4`
+    : undefined;
   return NextResponse.redirect(
-    await storage().signedDownloadUrl(asset.r2ObjectKey, 300),
+    await storage().signedDownloadUrl(
+      asset.r2ObjectKey,
+      300,
+      downloadFilename ? { downloadFilename } : undefined,
+    ),
   );
 }
