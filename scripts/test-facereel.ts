@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { mockGenerateFaceReel } from "@facereel/worker";
+import { mockGenerateFaceReel } from "../packages/worker/src/facereel.ts";
 
 const outputDir = path.resolve("tmp", "test", "facereel");
 await rm(outputDir, { recursive: true, force: true });

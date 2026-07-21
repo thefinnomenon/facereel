@@ -1,263 +1,417 @@
-import { mkdir } from "node:fs/promises";
+import { claimRenderJob, markJobFailure, prisma } from "@facereel/db";
+import { storage } from "@facereel/storage";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
+import { sendPendingEmail } from "./email.ts";
 import {
-  claimNextJob,
-  getJob,
-  incrementJobRetry,
-  logError,
-  logInfo,
-  logWarn,
-  nowIso,
-  storageDir,
-  trackEvent,
-  updateJob
-} from "@facereel/db";
-import { sendAdminJobCreatedEmail, sendProcessingEmail, sendReadyEmail } from "./email.ts";
-import { faceReelVideoFilename, generateFaceReel, mockGenerateFaceReel } from "./facereel.ts";
-import { buildInstagramMediaManifest, checkInstagramProfile, downloadScanImages, downloadSourceImages } from "./instagram.ts";
+  faceReelPosterFilename,
+  faceReelVideoFilename,
+  generateFaceReel,
+  mockGenerateFaceReel,
+} from "./facereel.ts";
+import {
+  buildInstagramMediaManifest,
+  checkInstagramProfile,
+  downloadScanImages,
+  downloadSourceImages,
+} from "./instagram.ts";
 
-export { buildInstagramMediaManifest, checkInstagramProfile, downloadScanImages, downloadSourceImages } from "./instagram.ts";
-export { appUrl, normalizeEmail, sanitizeInstagramUsername } from "./validation.ts";
-export { faceReelPosterFilename, faceReelVideoFilename, generateFaceReel, mockGenerateFaceReel } from "./facereel.ts";
-export { sendAdminJobCreatedEmail, sendProcessingEmail, sendReadyEmail } from "./email.ts";
+export {
+  buildInstagramMediaManifest,
+  checkInstagramProfile,
+  downloadScanImages,
+  downloadSourceImages,
+} from "./instagram.ts";
+export {
+  appUrl,
+  normalizeEmail,
+  sanitizeInstagramUsername,
+} from "./validation.ts";
+export {
+  detectFaces,
+  faceReelPosterFilename,
+  faceReelVideoFilename,
+  generateFaceReel,
+  mockGenerateFaceReel,
+} from "./facereel.ts";
 
-const RETENTION_DAYS = 7;
+const STALE_MS = Number(process.env.RENDER_STALE_MINUTES || 30) * 60_000;
+export type ProcessResult =
+  | "COMPLETED"
+  | "ALREADY_COMPLETED"
+  | "ALREADY_PROCESSING"
+  | "RETRY"
+  | "TERMINAL";
 
-export type ProcessJobOptions = {
-  allowRetry?: boolean;
-};
-
-export async function processJob(jobId: string, options: ProcessJobOptions = {}): Promise<void> {
-  const allowRetry = options.allowRetry ?? true;
-  const current = getJob(jobId);
-  if (!current) throw new Error(`Job not found: ${jobId}`);
-  if (current.status === "completed") return;
-  if (current.status === "failed" && !allowRetry) return;
-
-  updateJob(jobId, {
-    status: "processing",
-    progress: 2,
-    step: "Job created",
-    processing_started_at: current.processing_started_at ?? nowIso(),
-    error_message: null
+export async function processRenderJob(jobId: string): Promise<ProcessResult> {
+  const claim = await claimRenderJob(
+    jobId,
+    new Date(Date.now() - STALE_MS),
+    process.env.K_REVISION || process.env.GIT_SHA,
+  );
+  if (claim === "COMPLETED") {
+    await sendPendingEmail(jobId, "COMPLETION");
+    return "ALREADY_COMPLETED";
+  }
+  if (claim === "ACTIVE") return "ALREADY_PROCESSING";
+  if (claim !== "CLAIMED") return "TERMINAL";
+  await sendPendingEmail(jobId, "PROCESSING").catch(() => {});
+  const job = await prisma.renderJob.findUniqueOrThrow({
+    where: { id: jobId },
+    include: { project: { include: { sourceImages: true } } },
   });
-
-  trackEvent({ event: "worker_started", jobId, user: current.email });
-  logInfo({ event: "worker_started", jobId, user: current.email, message: "Worker started processing job." });
-
+  const scratch = await mkdtemp(
+    path.join(tmpdir(), `facereel-${jobId}-a${job.attemptCount}-`),
+  );
+  const progress = createProgressReporter(jobId);
   try {
-    const useMock = process.env.FACEREEL_MOCK === "1";
+    const target = job.project.sourceImages.find(
+      (s) => s.orderIndex === 0 && s.uploadStatus === "UPLOADED",
+    );
+    if (!target)
+      throw renderError(
+        "SOURCE_IMAGE_MISSING",
+        "The target face photo is missing.",
+        false,
+      );
+    const targetPath = path.join(scratch, "target");
+    await progress.update(3, "DOWNLOADING_IMAGES");
+    await storage().downloadToFile(target.r2ObjectKey, targetPath);
+    await progress.update(8, "VALIDATING_IMAGES");
     let result: Awaited<ReturnType<typeof generateFaceReel>>;
-    let instagramMetadata = {
-      oldestImagePostAt: null as string | null,
-      newestImagePostAt: null as string | null
-    };
-    let warnings: string[] = [];
-
-    if (useMock) {
-      updateJob(jobId, { progress: 20, step: "Scanning faces", ig_public: 1, ig_post_count: 8, scan_count: 8 });
+    if (process.env.FACEREEL_MOCK === "1")
       result = await mockGenerateFaceReel({
-        outputDir: current.output_dir,
-        onProgress(event) {
-          updateJob(jobId, {
-            progress: Math.max(20, Math.min(98, Math.round(20 + event.progress * 78))),
-            step: event.stage,
-            matched_count: event.matched_count ?? 0
-          });
-        }
+        outputDir: scratch,
+        onProgress: (e) => void progress.mapped(e.stage, e.progress),
       });
-    } else {
-      const check = await checkInstagramProfile(current.username);
-      if (!check.exists) throw new Error("Instagram profile was not found.");
-      if (!check.is_public) throw new Error("Instagram profile is private. Make it public and resubmit or retry.");
-
-      updateJob(jobId, {
-        progress: 8,
-        step: "Instagram verified",
-        ig_public: 1,
-        ig_post_count: check.estimated_photo_count
-      });
-      trackEvent({ event: "instagram_check_public", jobId, user: current.email, metadata: { estimatedPhotoCount: check.estimated_photo_count } });
-
-      const maxImages = positiveIntFromEnv("FACEREEL_MAX_IMAGES", 0);
+    else {
+      const check = await checkInstagramProfile(job.project.instagramUsername);
+      if (!check.exists)
+        throw renderError(
+          "SOURCE_IMAGE_MISSING",
+          "The Instagram profile was not found.",
+          false,
+        );
+      if (!check.is_public)
+        throw renderError(
+          "SOURCE_IMAGE_INVALID",
+          "The Instagram profile must remain public while rendering.",
+          false,
+        );
       const manifest = await buildInstagramMediaManifest({
-        username: current.username,
-        ...(maxImages ? { maxImages } : {}),
-        onProgress(event) {
-          updateJob(jobId, {
-            progress: Math.max(10, Math.min(22, Math.round(10 + event.progress * 12))),
-            step: "Finding photos",
-            ig_post_count: event.total_count ?? check.estimated_photo_count
-          });
-        }
+        username: job.project.instagramUsername,
+        maxImages: positiveInt("FACEREEL_MAX_IMAGES", 500),
+        onProgress: (e) =>
+          void progress.update(
+            8 + Math.round(e.progress * 5),
+            "DOWNLOADING_IMAGES",
+          ),
       });
-      if (manifest.items.length === 0) throw new Error("No Instagram image posts were available to scan.");
-      warnings = [...warnings, ...manifest.warnings];
-      instagramMetadata = {
-        oldestImagePostAt: manifest.oldest_image_post_at,
-        newestImagePostAt: manifest.newest_image_post_at
-      };
-      updateJob(jobId, { progress: 24, step: "Scanning faces", ig_post_count: manifest.items.length });
-
-      const scansDir = path.join(current.output_dir, "scans");
+      if (!manifest.items.length)
+        throw renderError(
+          "INSUFFICIENT_VALID_IMAGES",
+          "No source photos were available.",
+          false,
+        );
       const scans = await downloadScanImages({
         items: manifest.items,
-        outputDir: scansDir,
-        onProgress(event) {
-          updateJob(jobId, {
-            progress: Math.max(24, Math.min(48, Math.round(24 + event.progress * 24))),
-            step: "Scanning faces",
-            scan_count: event.downloaded_count ?? 0,
-            skipped_count: Math.max(0, (event.total_count ?? 0) - (event.downloaded_count ?? 0))
-          });
-        }
+        outputDir: path.join(scratch, "scans"),
+        onProgress: (e) =>
+          void progress.update(
+            10 + Math.round(e.progress * 15),
+            "DOWNLOADING_IMAGES",
+            { processedImages: e.downloaded_count, totalImages: e.total_count },
+          ),
       });
-      warnings = [...warnings, ...scans.errors];
-      if (scans.images.length === 0) throw new Error("No scan images could be downloaded.");
-
-      const sourcesDir = path.join(current.output_dir, "sources");
+      if (!scans.images.length)
+        throw renderError(
+          "SOURCE_IMAGE_INVALID",
+          "No source photos could be decoded.",
+          true,
+        );
       result = await generateFaceReel({
-        targetPath: current.target_path,
+        targetPath,
         scanImages: scans.images,
-        outputDir: current.output_dir,
-        sourceDownloader(matches) {
-          return downloadSourceImages({
+        outputDir: scratch,
+        sourceDownloader: async (matches) => {
+          const downloaded = await downloadSourceImages({
             items: matches,
-            outputDir: sourcesDir,
-            onProgress(event) {
-              updateJob(jobId, {
-                progress: Math.max(62, Math.min(78, Math.round(62 + event.progress * 16))),
-                step: "Downloading matches",
-                downloaded_count: event.downloaded_count ?? 0
-              });
-            }
+            outputDir: path.join(scratch, "sources"),
+            onProgress: (e) =>
+              void progress.update(
+                30 + Math.round(e.progress * 10),
+                "DOWNLOADING_IMAGES",
+                {
+                  processedImages: e.downloaded_count,
+                  totalImages: e.total_count,
+                },
+              ),
           });
+          await Promise.all(
+            downloaded.images.map(async (image, index) => {
+              const sourceId = `${jobId}-${image.id}`;
+              const key = `projects/${job.projectId}/source/${sourceId}/original.jpg`;
+              const object = await storage().uploadFile(
+                key,
+                image.sourcePath,
+                "image/jpeg",
+              );
+              await prisma.sourceImage.upsert({
+                where: { r2ObjectKey: key },
+                create: {
+                  id: sourceId,
+                  projectId: job.projectId,
+                  orderIndex: index + 1,
+                  r2Bucket: object.bucket,
+                  r2ObjectKey: key,
+                  originalFilename: `${image.id}.jpg`,
+                  contentType: "image/jpeg",
+                  sizeBytes: BigInt(object.sizeBytes),
+                  width: image.width,
+                  height: image.height,
+                  checksum: object.etag ?? null,
+                  uploadStatus: "UPLOADED",
+                  validationStatus: "VALID",
+                },
+                update: {
+                  checksum: object.etag ?? null,
+                  sizeBytes: BigInt(object.sizeBytes),
+                  uploadStatus: "UPLOADED",
+                  validationStatus: "VALID",
+                },
+              });
+            }),
+          );
+          return downloaded;
         },
-        onProgress(event) {
-          const range: [number, number] = event.stage === "Scanning faces"
-            ? [48, 62]
-            : event.stage === "Aligning faces"
-              ? [78, 92]
-              : [92, 98];
-          const patch = {
-            progress: Math.max(range[0], Math.min(range[1], Math.round(range[0] + event.progress * (range[1] - range[0])))),
-            step: event.stage
-          };
-          updateJob(jobId, typeof event.matched_count === "number" ? { ...patch, matched_count: event.matched_count } : patch);
-        }
+        onProgress: (e) => void progress.mapped(e.stage, e.progress),
       });
     }
-
-    const cleanupAfter = new Date(Date.now() + RETENTION_DAYS * 24 * 60 * 60_000).toISOString();
-    updateJob(jobId, {
-      status: "completed",
-      progress: 100,
-      step: "Done",
-      scan_count: result.scannedCount,
-      downloaded_count: result.highResCount,
-      matched_count: result.matchedCount,
-      skipped_count: result.skippedCount,
-      video_path: result.videoPath,
-      poster_path: result.posterPath,
-      processing_completed_at: nowIso(),
-      metadata: JSON.stringify({
-        ...safeMetadata(current.metadata),
-        cleanupAfter,
-        instagram: instagramMetadata,
-        faceReel: {
-          video: faceReelVideoFilename,
-          videoWidth: result.videoWidth,
-          videoHeight: result.videoHeight,
-          frameCount: result.framePaths.length,
-          matchThreshold: result.matchThreshold,
-          warnings: [...warnings, ...result.warnings]
-        }
-      })
+    await progress.update(92, "UPLOADING_OUTPUTS");
+    const videoMeta = await validateVideo(
+      result.videoPath,
+      job.project.frameRate,
+    );
+    const videoKey = `projects/${job.projectId}/renders/${jobId}/outputs/master.mp4`;
+    const posterKey = `projects/${job.projectId}/renders/${jobId}/outputs/poster.jpg`;
+    const [video, poster] = await Promise.all([
+      storage().uploadFile(videoKey, result.videoPath, "video/mp4"),
+      storage().uploadFile(posterKey, result.posterPath, "image/jpeg"),
+    ]);
+    await progress.update(98, "FINALIZING");
+    await prisma.$transaction(async (tx) => {
+      await tx.renderedAsset.createMany({
+        data: [
+          {
+            renderJobId: jobId,
+            projectId: job.projectId,
+            assetType: "MASTER_VIDEO",
+            variant: "master",
+            r2Bucket: video.bucket,
+            r2ObjectKey: videoKey,
+            contentType: "video/mp4",
+            sizeBytes: BigInt(video.sizeBytes),
+            width: videoMeta.width,
+            height: videoMeta.height,
+            durationMs: videoMeta.durationMs,
+            frameRate: videoMeta.frameRate,
+            checksum: video.etag ?? null,
+          },
+          {
+            renderJobId: jobId,
+            projectId: job.projectId,
+            assetType: "POSTER_FRAME",
+            variant: "poster",
+            r2Bucket: poster.bucket,
+            r2ObjectKey: posterKey,
+            contentType: "image/jpeg",
+            sizeBytes: BigInt(poster.sizeBytes),
+            width: result.videoWidth,
+            height: result.videoHeight,
+            checksum: poster.etag ?? null,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      await tx.renderJob.update({
+        where: { id: jobId },
+        data: {
+          status: "COMPLETED",
+          progress: 100,
+          stage: "COMPLETED",
+          completedAt: new Date(),
+          heartbeatAt: new Date(),
+          events: {
+            create: {
+              eventType: "COMPLETED",
+              stage: "COMPLETED",
+              progress: 100,
+            },
+          },
+          emails: {
+            upsert: {
+              where: {
+                renderJobId_kind: { renderJobId: jobId, kind: "COMPLETION" },
+              },
+              create: { kind: "COMPLETION" },
+              update: { status: "PENDING" },
+            },
+          },
+        },
+      });
+      await tx.faceReelProject.update({
+        where: { id: job.projectId },
+        data: { status: "COMPLETED" },
+      });
     });
-
-    trackEvent({ event: "worker_completed", jobId, user: current.email, metadata: { matchedCount: result.matchedCount } });
-    logInfo({ event: "worker_completed", jobId, user: current.email, message: "Worker completed job.", metadata: { matchedCount: result.matchedCount } });
-    await sendReadyEmail({ to: current.email, jobId, username: current.username }).catch((error) => {
-      logWarn({ event: "ready_email_failed", jobId, user: current.email, message: error instanceof Error ? error.message : String(error) });
-    });
+    await sendPendingEmail(jobId, "COMPLETION");
+    return "COMPLETED";
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logError({
-      event: "worker_failed",
-      jobId,
-      user: current.email,
-      message,
-      stack: error instanceof Error ? error.stack : undefined
-    });
-    trackEvent({ event: "worker_failed", jobId, user: current.email, metadata: { message, retry: allowRetry } });
-
-    const latest = getJob(jobId);
-    if (allowRetry && latest && latest.retry_count < 1) {
-      incrementJobRetry(jobId);
-      updateJob(jobId, {
-        status: "queued",
-        progress: 5,
-        step: "Job created",
-        error_message: `Retrying after failure: ${message}`
-      });
-      logWarn({ event: "worker_retry", jobId, user: current.email, message: "Retrying failed job once." });
-      await processJob(jobId, { allowRetry: false });
-      return;
-    }
-
-    updateJob(jobId, {
-      status: "failed",
-      progress: 100,
-      step: "Failed",
-      error_message: message,
-      processing_completed_at: nowIso()
-    });
+    const classified = classify(error);
+    await markJobFailure(jobId, classified);
+    if (!classified.retryable) await sendPendingEmail(jobId, "FAILURE");
+    return classified.retryable ? "RETRY" : "TERMINAL";
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
   }
 }
 
-export async function processNextJob(): Promise<boolean> {
-  const job = claimNextJob();
-  if (!job) return false;
-  await processJob(job.id);
-  return true;
+function createProgressReporter(jobId: string) {
+  let lastProgress = -1,
+    lastStage = "",
+    lastWrite = 0;
+  return {
+    async update(
+      progress: number,
+      stage: string,
+      detail?: Record<string, unknown>,
+    ) {
+      const now = Date.now();
+      progress = Math.max(0, Math.min(100, progress));
+      if (
+        stage === lastStage &&
+        progress - lastProgress < 2 &&
+        now - lastWrite < 10_000
+      )
+        return;
+      lastProgress = progress;
+      lastStage = stage;
+      lastWrite = now;
+      try {
+        await prisma.renderJob.updateMany({
+          where: { id: jobId, status: "PROCESSING" },
+          data: {
+            progress,
+            stage,
+            progressDetail: detail as any,
+            heartbeatAt: new Date(),
+          },
+        });
+      } catch (error) {
+        console.warn(
+          JSON.stringify({
+            event: "progress_write_failed",
+            jobId,
+            stage,
+            message: String(error),
+          }),
+        );
+      }
+    },
+    async mapped(stage: string, fraction: number) {
+      const map: Record<string, [number, number, string]> = {
+        "Scanning faces": [25, 45, "DETECTING_FACES"],
+        "Downloading matches": [45, 50, "DOWNLOADING_IMAGES"],
+        "Aligning faces": [50, 70, "ALIGNING_FACES"],
+        "Rendering video": [70, 92, "ENCODING_VIDEO"],
+      };
+      const [start, end, name] = map[stage] || [50, 90, "GENERATING_FRAMES"];
+      await this.update(Math.round(start + (end - start) * fraction), name);
+    },
+  };
 }
-
-export async function runWorkerLoop(input: { pollMs?: number | undefined; once?: boolean | undefined } = {}): Promise<void> {
-  const pollMs = input.pollMs ?? 5_000;
-  await mkdir(storageDir(), { recursive: true });
-  while (true) {
-    const processed = await processNextJob();
-    if (input.once) return;
-    if (!processed) await sleep(pollMs);
-  }
+function renderError(code: string, message: string, retryable: boolean) {
+  return Object.assign(new Error(message), { code, retryable });
 }
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function classify(error: unknown) {
+  const value = error as {
+    code?: string;
+    retryable?: boolean;
+    message?: string;
+    stack?: string;
+  };
+  return {
+    code:
+      value.code ||
+      (/ffmpeg/i.test(value.message || "")
+        ? "VIDEO_ENCODING_FAILED"
+        : "INTERNAL_RENDER_ERROR"),
+    message: value.code
+      ? value.message || "Rendering failed."
+      : "Rendering was interrupted. We will retry when safe.",
+    internal: (value.stack || value.message || String(error)).slice(0, 4000),
+    retryable: value.retryable ?? true,
+  };
 }
-
-function positiveIntFromEnv(name: string, fallback: number): number {
-  const parsed = Number.parseInt(process.env[name] || "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+function positiveInt(name: string, fallback: number) {
+  const n = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
-
-function safeMetadata(value: string | null): Record<string, unknown> {
-  if (!value) return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
-}
-
-export async function sendInitialProcessingEmail(input: {
-  to: string;
-  jobId: string;
-  username: string;
-  queuePosition?: number | null;
-  estimatedWaitSeconds?: number | null;
-  estimatedReadySeconds?: number | null;
-}): Promise<void> {
-  await sendProcessingEmail(input);
+async function validateVideo(
+  file: string,
+  expectedFps: number,
+): Promise<{
+  durationMs: number;
+  width: number;
+  height: number;
+  frameRate: number;
+}> {
+  const info = await new Promise<any>((resolve, reject) => {
+    const child = spawn(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration:stream=codec_name,width,height,r_frame_rate",
+        "-of",
+        "json",
+        file,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "",
+      stderr = "";
+    child.stdout.on("data", (c) => (stdout += c));
+    child.stderr.on("data", (c) => (stderr = (stderr + c).slice(-2000)));
+    child.on("close", (code) =>
+      code === 0
+        ? resolve(JSON.parse(stdout))
+        : reject(new Error(`ffprobe failed: ${stderr}`)),
+    );
+    child.on("error", reject);
+  });
+  const fileStat = await stat(file);
+  const stream = info.streams?.find((s: any) => s.codec_name === "h264");
+  const duration = Number(info.format?.duration);
+  if (
+    !stream ||
+    fileStat.size <= 0 ||
+    !duration ||
+    stream.width !== 1080 ||
+    stream.height !== 1920
+  )
+    throw renderError(
+      "OUTPUT_VALIDATION_FAILED",
+      "The rendered video did not pass validation.",
+      true,
+    );
+  return {
+    durationMs: Math.round(duration * 1000),
+    width: stream.width,
+    height: stream.height,
+    frameRate: expectedFps,
+  };
 }

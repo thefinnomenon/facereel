@@ -1,11 +1,2 @@
-import "dotenv/config";
-import { runWorkerLoop } from "./index.ts";
-
-const once = process.argv.includes("--once");
-const pollIndex = process.argv.indexOf("--poll-ms");
-const pollMs = pollIndex >= 0 ? Number.parseInt(process.argv[pollIndex + 1] || "", 10) : undefined;
-
-runWorkerLoop({ once, pollMs: Number.isFinite(pollMs) ? pollMs : undefined }).catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+import "dotenv/config"; import { disconnectPrisma } from "@facereel/db"; import { processRenderJob } from "./index.ts";
+const jobId=process.argv[2];if(!jobId)throw new Error("Usage: npm run worker:once -- <job-id>");processRenderJob(jobId).then(console.log).finally(disconnectPrisma);
