@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 type Job = {
   id: string;
   status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED";
@@ -7,7 +7,7 @@ type Job = {
   stage: string;
   errorCode?: string | null;
   errorMessage?: string | null;
-  assets: Array<{ id: string; assetType: string; variant: string }>;
+  assets: Array<{ id: string; assetType: string; variant: string; contentType?: string }>;
 };
 const labels: Record<string, string> = {
   QUEUED: "Queued",
@@ -26,15 +26,14 @@ export default function Status({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const [id, setId] = useState("");
+  const { id } = use(params);
   const [job, setJob] = useState<Job>();
   const [error, setError] = useState("");
   const [access, setAccess] = useState("");
+  const [shareLoading, setShareLoading] = useState(false);
+  const [actionMessage, setActionMessage] = useState("");
+  const shareFile = useRef<File | null>(null);
   useEffect(() => {
-    void params.then((p) => setId(p.id));
-  }, [params]);
-  useEffect(() => {
-    if (!id) return;
     const queryAccess = new URLSearchParams(window.location.search).get("access") || "";
     setAccess(queryAccess);
     let stopped = false;
@@ -67,6 +66,51 @@ export default function Status({
       clearTimeout(timer);
     };
   }, [id]);
+  const videoAsset = job?.assets.find((asset) => asset.assetType === "MASTER_VIDEO");
+  const posterAsset = job?.assets.find((asset) => asset.assetType === "POSTER_FRAME");
+  const videoUrl = job && videoAsset ? assetUrl(job.id, videoAsset.id, access) : "";
+  const posterUrl = job && posterAsset ? assetUrl(job.id, posterAsset.id, access) : "";
+
+  async function shareVideo() {
+    if (!job || !videoAsset || shareLoading) return;
+    setShareLoading(true);
+    setActionMessage("");
+    try {
+      if (!navigator.share) {
+        setActionMessage("Sharing is not supported in this browser. You can download the video instead.");
+        return;
+      }
+      let file = shareFile.current;
+      if (!file) {
+        const response = await fetch(videoUrl);
+        if (!response.ok) throw new Error("The video could not be loaded for sharing.");
+        const blob = await response.blob();
+        file = new File([blob], `facereel-${job.id}.mp4`, {
+          type: blob.type || videoAsset.contentType || "video/mp4",
+        });
+        shareFile.current = file;
+      }
+      if (!navigator.canShare?.({ files: [file] })) {
+        setActionMessage("Sharing video files is not supported in this browser. You can download the video instead.");
+        return;
+      }
+      if (navigator.userActivation && !navigator.userActivation.isActive) {
+        setActionMessage("Your video is ready to share. Tap Share video again to open the share sheet.");
+        return;
+      }
+      await navigator.share({
+        files: [file],
+        title: "My FaceReel",
+        text: "Made with FaceReel.net",
+      });
+    } catch (shareError) {
+      if (shareError instanceof DOMException && shareError.name === "AbortError") return;
+      setActionMessage(shareError instanceof Error ? shareError.message : "Unable to share the video.");
+    } finally {
+      setShareLoading(false);
+    }
+  }
+
   return (
     <div className="page">
       <header className="topbar">
@@ -107,18 +151,46 @@ export default function Status({
                 {job.errorCode && `(${job.errorCode})`}
               </p>
             )}
-            {job.status === "COMPLETED" &&
-              job.assets.map((a) => (
-                <a
-                  className="button"
-                  key={a.id}
-                  href={`/api/render-jobs/${job.id}/assets/${a.id}${access ? `?access=${encodeURIComponent(access)}` : ""}`}
-                >
-                  {a.assetType === "MASTER_VIDEO"
-                    ? "Download video"
-                    : "View poster"}
-                </a>
-              ))}
+            {job.status === "COMPLETED" && videoAsset && (
+              <div className="completed-result">
+                <div className="video-preview">
+                  <div className="video-shell">
+                    <video
+                      className="result-video"
+                      src={videoUrl}
+                      poster={posterUrl || undefined}
+                      controls
+                      preload="metadata"
+                      playsInline
+                    >
+                      Your browser does not support video playback.
+                    </video>
+                  </div>
+                </div>
+                <div className="download-list download-actions">
+                  <a
+                    className="button button-primary"
+                    href={assetUrl(job.id, videoAsset.id, access, true)}
+                  >
+                    <DownloadIcon />
+                    Download video
+                  </a>
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    onClick={shareVideo}
+                    disabled={shareLoading}
+                  >
+                    {shareLoading ? <SpinnerIcon /> : <ShareIcon />}
+                    {shareLoading ? "Preparing video…" : "Share video"}
+                  </button>
+                </div>
+                {actionMessage && <p className="message" role="status">{actionMessage}</p>}
+              </div>
+            )}
+            {job.status === "COMPLETED" && !videoAsset && (
+              <p className="message" role="alert">The completed video is not available yet. Please refresh this page in a moment.</p>
+            )}
           </>
         )}
         {error && (
@@ -131,11 +203,49 @@ export default function Status({
   );
 }
 
+function assetUrl(jobId: string, assetId: string, access: string, download = false) {
+  const query = new URLSearchParams();
+  if (access) query.set("access", access);
+  if (download) query.set("download", "1");
+  const suffix = query.size ? `?${query.toString()}` : "";
+  return `/api/render-jobs/${jobId}/assets/${assetId}${suffix}`;
+}
+
 function MailIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="3" y="5" width="18" height="14" rx="2" />
       <path d="m3 7 9 6 9-6" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 21h14" />
+    </svg>
+  );
+}
+
+function ShareIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <path d="m8.6 10.5 6.8-4" />
+      <path d="m8.6 13.5 6.8 4" />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <path d="M21 12a9 9 0 1 1-6.2-8.6" />
     </svg>
   );
 }

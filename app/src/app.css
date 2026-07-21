@@ -966,6 +966,10 @@ h3 {
   margin: 22px 0 16px;
 }
 
+.completed-result {
+  margin-top: 18px;
+}
+
 .video-shell {
   position: relative;
   width: min(100%, 360px);
