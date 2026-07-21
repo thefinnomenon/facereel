@@ -132,8 +132,14 @@ export default function Home() {
         method: "POST",
         body: new FormData(event.currentTarget),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Unable to submit FaceReel");
+      const contentType = response.headers.get("content-type") || "";
+      const data = contentType.includes("application/json")
+        ? await response.json()
+        : null;
+      if (!response.ok) {
+        throw new Error(data?.error || "Unable to submit FaceReel. Please try again.");
+      }
+      if (!data?.jobId) throw new Error("FaceReel returned an invalid response.");
       router.push(`/status/${data.jobId}`);
     } catch (value) {
       setError(value instanceof Error ? value.message : "Unable to submit FaceReel");
