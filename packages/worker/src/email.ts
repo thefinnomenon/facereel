@@ -1,9 +1,9 @@
 import { prisma } from "@facereel/db";
 import { appUrl } from "./validation.ts";
-type Kind = "COMPLETION" | "FAILURE" | "PROCESSING";
+export type EmailKind = "COMPLETION" | "FAILURE" | "PROCESSING";
 export async function sendPendingEmail(
   jobId: string,
-  kind: Kind,
+  kind: EmailKind,
 ): Promise<void> {
   const delivery = await prisma.emailDelivery.findUnique({
     where: { renderJobId_kind: { renderJobId: jobId, kind } },
@@ -29,21 +29,13 @@ export async function sendPendingEmail(
   try {
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) throw new Error("RESEND_API_KEY is not configured");
-    const ready = kind === "COMPLETION";
-    const failed = kind === "FAILURE";
-    const subject = ready
-      ? "Your FaceReel is ready"
-      : failed
-        ? "We could not create your FaceReel"
-        : "We're creating your FaceReel";
     const statusUrl = `${appUrl()}/status/${jobId}?access=${encodeURIComponent(job.project.ownerAccessToken)}`;
-    const failureReason = job.errorMessage || "We could not create a FaceReel from the submitted photos.";
-    const text = failed
-      ? `${subject} for @${job.project.instagramUsername}.\n\n${failureReason}\n\nView status: ${statusUrl}`
-      : `${subject} for @${job.project.instagramUsername}.\n\nView status: ${statusUrl}`;
-    const html = failed
-      ? `<h1>${escapeHtml(subject)}</h1><p>FaceReel for <strong>@${escapeHtml(job.project.instagramUsername)}</strong>.</p><p>${escapeHtml(failureReason)}</p><p><a href="${statusUrl}">View status</a></p>`
-      : `<h1>${escapeHtml(subject)}</h1><p>FaceReel for <strong>@${escapeHtml(job.project.instagramUsername)}</strong>.</p><p><a href="${statusUrl}">View status</a></p>`;
+    const { subject, text, html } = buildEmailContent({
+      kind,
+      username: job.project.instagramUsername,
+      statusUrl,
+      errorMessage: job.errorMessage,
+    });
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -105,6 +97,29 @@ export async function sendPendingEmail(
     );
   }
 }
+
+export function buildEmailContent(input: {
+  kind: EmailKind;
+  username: string;
+  statusUrl: string;
+  errorMessage?: string | null;
+}) {
+  const ready = input.kind === "COMPLETION";
+  const failed = input.kind === "FAILURE";
+  const subject = ready
+    ? "Your FaceReel is ready"
+    : failed
+      ? "We could not create your FaceReel"
+      : "We're creating your FaceReel";
+  const intro = `FaceReel for @${input.username}.`;
+  const failureReason = input.errorMessage || "We could not create a FaceReel from the submitted photos.";
+  const processingNotice = "You don't need to stay on the status page. We'll email you when your FaceReel is ready, or if we need you to try again.";
+  const detail = failed ? failureReason : input.kind === "PROCESSING" ? processingNotice : "";
+  const text = `${subject}\n\n${intro}${detail ? `\n\n${detail}` : ""}\n\nView status: ${input.statusUrl}`;
+  const html = `<h1>${escapeHtml(subject)}</h1><p>FaceReel for <strong>@${escapeHtml(input.username)}</strong>.</p>${detail ? `<p>${escapeHtml(detail)}</p>` : ""}<p><a href="${input.statusUrl}">View status</a></p>`;
+  return { subject, text, html };
+}
+
 function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")
