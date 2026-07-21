@@ -1,122 +1,38 @@
-# FaceReel MVP
+# FaceReel
 
-FaceReel creates a shareable face-aligned video from public Instagram photos.
+FaceReel is a Next.js application plus a private Cloud Run video worker. It creates a 1080×1920 H.264 MP4 from a target face and matching public Instagram photos while keeping durable state in Prisma Postgres and media in private Cloudflare R2.
 
-Flow:
+## Production architecture
 
-1. User enters a public Instagram username, email, and one target-face image.
-2. App checks that the Instagram profile is public.
-3. Submit creates a queued SQLite job.
-4. Worker builds an Instagram media manifest with scan and source URLs.
-5. Worker downloads lower-resolution scan images and runs face matching in TypeScript.
-6. Worker downloads high-resolution originals only for matched images.
-7. Worker aligns matched faces into 1080x1920 frames and renders `facereel.mp4`.
+- `app/`: Next.js 16 application for Vercel, project submission, authorized status polling, and signed output redirects.
+- `packages/db`: Prisma 7 PostgreSQL schema/client and atomic render claiming.
+- `packages/storage`: streamed Cloudflare R2/S3-compatible storage abstraction.
+- `packages/dispatch`: Google Cloud Tasks dispatch and durable outbox reconciliation.
+- `packages/worker`: private HTTP service and unchanged face alignment/FFmpeg pipeline.
 
-## Stack
+The browser talks only to Next.js. A render submission creates the job and outbox row in one serializable transaction. Cloud Tasks sends only `{ "jobId": "…" }`; the worker atomically claims the row, loads authoritative project/source metadata, renders into ephemeral scratch space, uploads deterministic output keys, commits asset metadata and completion together, then attempts the independently idempotent Resend delivery.
 
-- SolidStart app in `app/`
-- Node/TypeScript API routes and worker
-- SQLite via `better-sqlite3`
-- RapidAPI Instagram profile/posts client
-- `@vladmandic/face-api` + `@tensorflow/tfjs-node`
-- `sharp` for image normalization and frame export
-- FFmpeg for MP4 rendering
-- Docker Compose with local persistent storage
+## Local development
 
-## Setup
+Use Node 22.16.0. Copy `.env.example` to `.env`, start PostgreSQL/R2-compatible storage, then:
 
 ```bash
-cp .env.example .env
 npm install
-npm run db:init
+npm run db:generate
+npm run db:migrate:dev
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+`CLOUD_TASKS_MODE=local` dispatches to the local authenticated worker endpoint. There is no SQLite or automatic local database fallback.
 
-## Required Environment
-
-- `APP_URL`
-- `ADMIN_PASSWORD`
-- `INSTAGRAM_RAPIDAPI_KEY`
-- `INSTAGRAM_RAPIDAPI_HOST`
-- `FACEAPI_MODEL_DIR`
-
-Optional:
-
-- `RESEND_API_KEY`
-- `EMAIL_FROM`
-- `ADMIN_EMAIL`
-- `FACEREEL_MATCH_THRESHOLD`
-- `FACEREEL_MIN_MATCHES`
-- `FACEREEL_MAX_IMAGES` to cap Instagram scanning. Leave unset or set to `0` for no cap.
-- `FACEREEL_MOCK=1` for local mock video generation without Instagram/model files.
-
-## Face API Models
-
-Place the face-api model files under `models/face-api` or set `FACEAPI_MODEL_DIR`.
-The worker expects SSD MobileNet, 68-point landmark, and recognition models.
-
-## Worker
-
-Run both app and worker:
+Useful checks:
 
 ```bash
-npm run dev
+npm run typecheck
+npm run build
+npm run test:facereel
+npm run dispatch:reconcile
+npm run jobs:recover
 ```
 
-Run only the worker:
-
-```bash
-npm run worker
-```
-
-The worker processes one queued job at a time. On a small Droplet, run a single
-worker process/container and do not scale the `worker` service above one replica.
-
-Submission emails include queue position and estimated timing. Set
-`FACEREEL_ESTIMATED_JOB_SECONDS` to tune the estimate; it defaults to `480`
-seconds.
-
-For small Droplets, keep per-job download fan-out modest:
-
-```env
-FACEREEL_SCAN_DOWNLOAD_CONCURRENCY=6
-FACEREEL_SOURCE_DOWNLOAD_CONCURRENCY=3
-```
-
-## Deployment
-
-DigitalOcean setup and GitHub Actions deployment are documented in
-[docs/digitalocean.md](docs/digitalocean.md). The included workflow deploys
-`main` by SSHing into the Droplet, pulling the repo, rebuilding Docker, and
-checking `/api/health`.
-
-## Storage
-
-Generated files live under `storage/`:
-
-```text
-storage/
-  facereel.sqlite
-  jobs/<job_id>/
-    target-*.jpg
-    scans/
-    sources/
-    frames/
-    face_manifest.json
-    poster.jpg
-    facereel.mp4
-```
-
-The app exposes generated videos through random download tokens and does not expose source-photo downloads in v1.
-
-## Local Verification
-
-```bash
-npm run test:check -- username
-npm run test:download -- username
-FACEREEL_MOCK=1 npm run worker -- --once
-```
-
-FFmpeg must be installed locally and in production.
+See [docs/production-architecture.md](docs/production-architecture.md) for the repository audit, failure model, environment variables, deployment sequence, IAM, retention, sizing, and rollback commands.

@@ -1,0 +1,214 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ProjectStatus {
+  DRAFT
+  READY
+  RENDERING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum UploadStatus {
+  PENDING
+  UPLOADED
+  FAILED
+}
+
+enum ValidationStatus {
+  PENDING
+  VALID
+  VALID_WITH_WARNINGS
+  INVALID
+}
+
+enum RenderJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum DispatchStatus {
+  PENDING
+  SENT
+}
+
+enum AssetType {
+  MASTER_VIDEO
+  POSTER_FRAME
+}
+
+enum EmailKind {
+  PROCESSING
+  COMPLETION
+  FAILURE
+}
+
+enum EmailStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+}
+
+model FaceReelProject {
+  id                 String          @id @default(uuid())
+  ownerTokenHash     String
+  ownerAccessToken   String          @unique
+  email              String
+  name               String
+  instagramUsername  String
+  status             ProjectStatus   @default(DRAFT)
+  outputFormat       String          @default("mp4")
+  orientation        String          @default("portrait")
+  aspectRatio        String          @default("9:16")
+  resolution         String          @default("1080x1920")
+  frameRate          Int             @default(30)
+  secondsPerImage    Float           @default(0.12)
+  transitionType     String          @default("cut")
+  transitionDuration Float           @default(0)
+  backgroundColor    String          @default("#000000")
+  musicObjectKey     String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  sourceImages       SourceImage[]
+  renderJobs         RenderJob[]
+  assets             RenderedAsset[]
+
+  @@index([email, createdAt])
+}
+
+model SourceImage {
+  id                String           @id @default(uuid())
+  projectId         String
+  orderIndex        Int
+  r2Bucket          String
+  r2ObjectKey       String           @unique
+  originalFilename  String
+  contentType       String
+  sizeBytes         BigInt
+  width             Int?
+  height            Int?
+  orientation       Int?
+  checksum          String?
+  uploadStatus      UploadStatus     @default(PENDING)
+  validationStatus  ValidationStatus @default(PENDING)
+  validationError   String?
+  detectionMetadata Json?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  project           FaceReelProject  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, orderIndex])
+  @@index([projectId, uploadStatus])
+}
+
+model RenderJob {
+  id                    String           @id @default(uuid())
+  projectId             String
+  email                 String
+  status                RenderJobStatus  @default(QUEUED)
+  progress              Int              @default(0)
+  stage                 String           @default("QUEUED")
+  progressDetail        Json?
+  attemptCount          Int              @default(0)
+  maxAttempts           Int              @default(3)
+  workerRevision        String?
+  errorCode             String?
+  errorMessage          String?
+  internalError         String?
+  processingStartedAt   DateTime?
+  heartbeatAt           DateTime?
+  completedAt           DateTime?
+  failedAt              DateTime?
+  cancelledAt           DateTime?
+  completionEmailSentAt DateTime?
+  failureEmailSentAt    DateTime?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  project               FaceReelProject  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assets                RenderedAsset[]
+  events                RenderJobEvent[]
+  dispatch              RenderDispatch?
+  emails                EmailDelivery[]
+
+  @@index([status, createdAt])
+  @@index([status, heartbeatAt])
+}
+
+model RenderedAsset {
+  id          String          @id @default(uuid())
+  renderJobId String
+  projectId   String
+  assetType   AssetType
+  variant     String
+  r2Bucket    String
+  r2ObjectKey String          @unique
+  contentType String
+  sizeBytes   BigInt
+  width       Int?
+  height      Int?
+  durationMs  Int?
+  frameRate   Float?
+  checksum    String?
+  createdAt   DateTime        @default(now())
+  renderJob   RenderJob       @relation(fields: [renderJobId], references: [id], onDelete: Cascade)
+  project     FaceReelProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([renderJobId, assetType, variant])
+  @@index([projectId])
+}
+
+model RenderJobEvent {
+  id          BigInt    @id @default(autoincrement())
+  renderJobId String
+  eventType   String
+  stage       String?
+  progress    Int?
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  renderJob   RenderJob @relation(fields: [renderJobId], references: [id], onDelete: Cascade)
+
+  @@index([renderJobId, createdAt])
+}
+
+model RenderDispatch {
+  id            String         @id @default(uuid())
+  renderJobId   String         @unique
+  status        DispatchStatus @default(PENDING)
+  attemptCount  Int            @default(0)
+  taskName      String?
+  lastError     String?
+  nextAttemptAt DateTime       @default(now())
+  sentAt        DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  renderJob     RenderJob      @relation(fields: [renderJobId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+}
+
+model EmailDelivery {
+  id                String      @id @default(uuid())
+  renderJobId       String
+  kind              EmailKind
+  status            EmailStatus @default(PENDING)
+  attemptCount      Int         @default(0)
+  providerMessageId String?
+  lastError         String?
+  sentAt            DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  renderJob         RenderJob   @relation(fields: [renderJobId], references: [id], onDelete: Cascade)
+
+  @@unique([renderJobId, kind])
+  @@index([status, createdAt])
+}

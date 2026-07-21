@@ -1,5 +1,6 @@
 import "dotenv/config";
-import { checkInstagramProfile, sanitizeInstagramUsername } from "@facereel/worker";
+import { checkInstagramProfile } from "../packages/worker/src/instagram.ts";
+import { sanitizeInstagramUsername } from "../packages/worker/src/validation.ts";
 
 const username = process.argv[2];
 if (!username) {

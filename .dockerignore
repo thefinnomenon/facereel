@@ -4,7 +4,12 @@ node_modules
 .vinxi
 .output
 dist
-storage
-tmp
+/storage
+/tmp
+/app
+/.next
+docs
+.github
+/scripts
 *.log
 .DS_Store

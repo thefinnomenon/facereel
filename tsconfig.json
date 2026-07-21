@@ -13,13 +13,14 @@
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "jsx": "preserve",
-    "jsxImportSource": "solid-js",
     "baseUrl": ".",
     "paths": {
       "@facereel/db": ["packages/db/src/index.ts"],
-      "@facereel/worker": ["packages/worker/src/index.ts"]
+      "@facereel/worker": ["packages/worker/src/index.ts"],
+      "@facereel/storage": ["packages/storage/src/index.ts"],
+      "@facereel/dispatch": ["packages/dispatch/src/index.ts"]
     }
   },
-  "include": ["app/src", "packages/**/*.ts", "scripts/**/*.ts"]
+  "include": ["packages/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["scripts/regenerate-local-job.ts"]
 }

@@ -1,39 +1,21 @@
 services:
-  app:
-    build: .
-    env_file:
-      - .env
+  postgres:
+    image: postgres:17-alpine
     environment:
-      NODE_ENV: production
-      PORT: 3000
-    ports:
-      - "3000:3000"
-    volumes:
-      - facereel-data:/app/storage
-    command: ["npm", "run", "start"]
-    restart: always
-    init: true
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-
+      POSTGRES_USER: facereel
+      POSTGRES_PASSWORD: facereel
+      POSTGRES_DB: facereel
+    ports: ["5432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
   worker:
     build: .
-    env_file:
-      - .env
+    env_file: [.env]
     environment:
-      NODE_ENV: production
-    volumes:
-      - facereel-data:/app/storage
-    command: ["npm", "run", "worker"]
-    restart: always
-    init: true
-    depends_on:
-      app:
-        condition: service_healthy
-
+      NODE_ENV: development
+      PORT: 8080
+      DATABASE_URL: postgresql://facereel:facereel@postgres:5432/facereel
+      LOCAL_WORKER_SECRET: local-development-only
+    ports: ["8080:8080"]
+    depends_on: [postgres]
 volumes:
-  facereel-data:
+  postgres-data:

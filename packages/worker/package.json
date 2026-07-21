@@ -5,5 +5,6 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
-  }
+  },
+  "dependencies": {"@facereel/db":"*","@facereel/storage":"*","@tensorflow/tfjs-node":"^4.22.0","@vladmandic/face-api":"^1.7.15","dotenv":"^16.5.0","google-auth-library":"^10.2.1","sharp":"^0.34.2","tsx":"^4.20.3"}
 }

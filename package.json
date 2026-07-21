@@ -15,27 +15,47 @@
     "build": "npm run build --workspaces --if-present",
     "build:nvm": "zsh -lc 'unset npm_config_prefix && source ~/.nvm/nvm.sh && nvm use && npm run build'",
     "start": "npm --workspace app run start",
-    "worker": "tsx packages/worker/src/cli.ts",
-    "db:init": "tsx packages/db/src/init.ts",
+    "worker": "tsx packages/worker/src/server.ts",
+    "worker:once": "tsx packages/worker/src/cli.ts",
+    "db:generate": "prisma generate --schema packages/db/prisma/schema.prisma",
+    "db:migrate": "prisma migrate deploy --config prisma.config.ts",
+    "db:migrate:dev": "prisma migrate dev --config prisma.config.ts",
+    "dispatch:reconcile": "tsx scripts/reconcile-dispatches.ts",
+    "jobs:recover": "tsx scripts/recover-stale-jobs.ts",
     "test:check": "tsx scripts/test-check.ts",
     "test:download": "tsx scripts/test-download.ts",
     "test:facereel": "tsx scripts/test-facereel.ts",
+    "test": "DATABASE_URL=postgresql://test:test@127.0.0.1:5432/test node --import tsx --test tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:nvm": "zsh -lc 'unset npm_config_prefix && source ~/.nvm/nvm.sh && nvm use && npm run typecheck'"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.32",
     "concurrently": "^10.0.3",
     "playwright": "^1.61.0",
+    "prisma": "^7.9.0",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.850.0",
+    "@aws-sdk/lib-storage": "^3.850.0",
+    "@aws-sdk/s3-request-presigner": "^3.850.0",
+    "@google-cloud/tasks": "^6.2.0",
+    "google-auth-library": "^10.2.1",
+    "@prisma/adapter-pg": "^7.9.0",
+    "@prisma/client": "^7.9.0",
     "@tensorflow/tfjs-node": "^4.22.0",
     "@vladmandic/face-api": "^1.7.15",
-    "better-sqlite3": "^11.10.0",
     "dotenv": "^16.5.0",
-    "sharp": "^0.34.2"
+    "pg": "^8.16.3",
+    "sharp": "^0.34.2",
+    "zod": "^4.0.14"
+  },
+  "overrides": {
+    "adm-zip": "^0.6.0",
+    "brace-expansion": "^1.1.16",
+    "postcss": "^8.5.10",
+    "next": { "postcss": "8.5.10" }
   }
 }

@@ -4,11 +4,15 @@ node_modules
 app/.vinxi
 app/.output
 dist
-storage
-tmp
+/storage
+/tmp
+/app/.next
 .env
+.env.prod
 .DS_Store
 *.log
+.vercel
+.env*
 
 # Personal local test images; never publish these files.
 /scripts/hero.jpeg

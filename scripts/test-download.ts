@@ -1,7 +1,8 @@
 import "dotenv/config";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { buildInstagramMediaManifest, downloadScanImages, sanitizeInstagramUsername } from "@facereel/worker";
+import { buildInstagramMediaManifest, downloadScanImages } from "../packages/worker/src/instagram.ts";
+import { sanitizeInstagramUsername } from "../packages/worker/src/validation.ts";
 
 const username = process.argv[2];
 if (!username) {
