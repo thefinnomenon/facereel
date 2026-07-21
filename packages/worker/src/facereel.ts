@@ -127,7 +127,7 @@ export async function generateFaceReel(input: {
   }
 
   if (scanMatches.length < minMatches) {
-    throw new Error(`Only ${scanMatches.length} matching photos were found. FaceReel needs at least ${minMatches} matched photos for a usable video.`);
+    throw insufficientMatchesError(scanMatches.length, minMatches);
   }
 
   const matchedById = new Map(scanMatches.map((match) => [match.image.id, match]));
@@ -207,6 +207,16 @@ export async function generateFaceReel(input: {
     videoHeight: HEIGHT,
     matchThreshold: threshold
   };
+}
+
+export function insufficientMatchesError(matchCount: number, minimum: number) {
+  const message = matchCount === 0
+    ? "No matching photos found. Upload a clear photo of someone who appears in this Instagram account."
+    : `Not enough matching photos found. FaceReel found ${matchCount}, but needs at least ${minimum}.`;
+  return Object.assign(new Error(message), {
+    code: "INSUFFICIENT_MATCHES",
+    retryable: false,
+  });
 }
 
 export async function mockGenerateFaceReel(input: {

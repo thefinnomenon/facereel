@@ -37,6 +37,13 @@ export async function sendPendingEmail(
         ? "We could not create your FaceReel"
         : "We're creating your FaceReel";
     const statusUrl = `${appUrl()}/status/${jobId}?access=${encodeURIComponent(job.project.ownerAccessToken)}`;
+    const failureReason = job.errorMessage || "We could not create a FaceReel from the submitted photos.";
+    const text = failed
+      ? `${subject} for @${job.project.instagramUsername}.\n\n${failureReason}\n\nView status: ${statusUrl}`
+      : `${subject} for @${job.project.instagramUsername}.\n\nView status: ${statusUrl}`;
+    const html = failed
+      ? `<h1>${escapeHtml(subject)}</h1><p>FaceReel for <strong>@${escapeHtml(job.project.instagramUsername)}</strong>.</p><p>${escapeHtml(failureReason)}</p><p><a href="${statusUrl}">View status</a></p>`
+      : `<h1>${escapeHtml(subject)}</h1><p>FaceReel for <strong>@${escapeHtml(job.project.instagramUsername)}</strong>.</p><p><a href="${statusUrl}">View status</a></p>`;
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -48,8 +55,8 @@ export async function sendPendingEmail(
         from: process.env.EMAIL_FROM || "FaceReel <onboarding@resend.dev>",
         to: job.email,
         subject,
-        text: `${subject} for @${job.project.instagramUsername}.\n\nView status: ${statusUrl}`,
-        html: `<h1>${escapeHtml(subject)}</h1><p>FaceReel for <strong>@${escapeHtml(job.project.instagramUsername)}</strong>.</p><p><a href="${statusUrl}">View status</a></p>`,
+        text,
+        html,
       }),
     });
     if (!response.ok)
