@@ -13,6 +13,9 @@ dist
 *.log
 .vercel
 .env*
+/marketing/campaign-state.json
+/marketing/campaign.lock
+/marketing/output/
 
 # Personal local test images; never publish these files.
 /scripts/hero.jpeg
