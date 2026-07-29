@@ -52,6 +52,23 @@ type ScanMatch = {
   detection: Detection;
 };
 
+type FrequentFaceSample = {
+  image: LocalScanImage;
+  detection: Detection;
+  faceCount: number;
+};
+
+export type FaceDescriptorSample = {
+  imageId: string;
+  descriptor: Float32Array;
+};
+
+export type FaceDescriptorCluster = {
+  imageIds: Set<string>;
+  sampleIndexes: number[];
+  centroid: Float32Array;
+};
+
 type AlignmentStats = {
   rotationDegrees: number;
   scale: number;
@@ -302,6 +319,174 @@ export async function detectFaces(imagePath: string): Promise<Detection[]> {
     }));
   } finally {
     tensor.dispose();
+  }
+}
+
+export async function findMostFrequentFace(input: {
+  scanImages: LocalScanImage[];
+  targetPath: string;
+  matchThreshold?: number;
+  onProgress?: (event: FaceReelProgressEvent) => void;
+}): Promise<{
+  targetPath: string;
+  appearances: number;
+  scannedPhotos: number;
+  detectedFaces: number;
+  clusterCount: number;
+}> {
+  const threshold = input.matchThreshold
+    ?? numberFromEnv("FACEREEL_MATCH_THRESHOLD", DEFAULT_MATCH_THRESHOLD);
+  const samples: FrequentFaceSample[] = [];
+
+  for (let index = 0; index < input.scanImages.length; index += 1) {
+    const image = input.scanImages[index]!;
+    try {
+      const detections = await detectFaces(image.scanPath);
+      for (const detection of detections) {
+        samples.push({ image, detection, faceCount: detections.length });
+      }
+    } catch {
+      // A corrupt or unsupported photo should not prevent profile-wide selection.
+    } finally {
+      input.onProgress?.({
+        stage: "Finding the most frequent face",
+        progress: (index + 1) / Math.max(1, input.scanImages.length),
+        matched_count: samples.length,
+        total_count: input.scanImages.length,
+      });
+    }
+  }
+
+  if (samples.length === 0) {
+    throw new Error("No detectable faces were found in this Instagram profile.");
+  }
+
+  const clusters = clusterFaceDescriptors(
+    samples.map((sample) => ({
+      imageId: sample.image.id,
+      descriptor: sample.detection.descriptor,
+    })),
+    threshold,
+  ).sort((a, b) =>
+    b.imageIds.size - a.imageIds.size
+    || b.sampleIndexes.length - a.sampleIndexes.length
+  );
+  const dominant = clusters[0];
+  if (!dominant) throw new Error("No recurring face could be selected.");
+
+  const representativeIndexes = [...dominant.sampleIndexes].sort((a, b) => {
+    const sampleA = samples[a]!;
+    const sampleB = samples[b]!;
+    const singleFacePreference = Number(sampleA.faceCount !== 1) - Number(sampleB.faceCount !== 1);
+    if (singleFacePreference !== 0) return singleFacePreference;
+    return euclideanDistance(sampleA.detection.descriptor, dominant.centroid)
+      - euclideanDistance(sampleB.detection.descriptor, dominant.centroid);
+  });
+
+  let targetWritten = false;
+  for (const sampleIndex of representativeIndexes) {
+    const sample = samples[sampleIndex]!;
+    if (sample.faceCount === 1) {
+      await copyFile(sample.image.scanPath, input.targetPath);
+      targetWritten = true;
+      break;
+    }
+    if (await writeFaceCrop(sample, input.targetPath, dominant.centroid, threshold)) {
+      targetWritten = true;
+      break;
+    }
+  }
+  if (!targetWritten) {
+    throw new Error("The most frequent face was found, but a clean target crop could not be created.");
+  }
+
+  return {
+    targetPath: input.targetPath,
+    appearances: dominant.imageIds.size,
+    scannedPhotos: input.scanImages.length,
+    detectedFaces: samples.length,
+    clusterCount: clusters.length,
+  };
+}
+
+export function clusterFaceDescriptors(
+  samples: FaceDescriptorSample[],
+  threshold: number,
+): FaceDescriptorCluster[] {
+  const clusters: Array<FaceDescriptorCluster & { descriptorCount: number }> = [];
+
+  for (let sampleIndex = 0; sampleIndex < samples.length; sampleIndex += 1) {
+    const sample = samples[sampleIndex]!;
+    let closest: (typeof clusters)[number] | undefined;
+    let closestDistance = Number.POSITIVE_INFINITY;
+
+    for (const cluster of clusters) {
+      const distance = euclideanDistance(sample.descriptor, cluster.centroid);
+      if (distance < closestDistance) {
+        closest = cluster;
+        closestDistance = distance;
+      }
+    }
+
+    if (!closest || closestDistance > threshold) {
+      clusters.push({
+        imageIds: new Set([sample.imageId]),
+        sampleIndexes: [sampleIndex],
+        centroid: new Float32Array(sample.descriptor),
+        descriptorCount: 1,
+      });
+      continue;
+    }
+
+    if (closest.imageIds.has(sample.imageId)) continue;
+    closest.imageIds.add(sample.imageId);
+    closest.sampleIndexes.push(sampleIndex);
+    closest.descriptorCount += 1;
+    for (let index = 0; index < closest.centroid.length; index += 1) {
+      closest.centroid[index] = (
+        (closest.centroid[index] ?? 0) * (closest.descriptorCount - 1)
+        + (sample.descriptor[index] ?? 0)
+      ) / closest.descriptorCount;
+    }
+  }
+
+  return clusters.map(({ descriptorCount: _, ...cluster }) => cluster);
+}
+
+async function writeFaceCrop(
+  sample: FrequentFaceSample,
+  outputPath: string,
+  centroid: Float32Array,
+  threshold: number,
+): Promise<boolean> {
+  const metadata = await sharp(sample.image.scanPath).rotate().metadata();
+  const width = metadata.width ?? 0;
+  const height = metadata.height ?? 0;
+  if (!width || !height) return false;
+
+  const box = sample.detection.box;
+  const cropSize = Math.min(
+    width,
+    height,
+    Math.ceil(Math.max(box.width, box.height) * 2.2),
+  );
+  const centerX = box.x + box.width / 2;
+  const centerY = box.y + box.height / 2;
+  const left = clamp(Math.round(centerX - cropSize / 2), 0, width - cropSize);
+  const top = clamp(Math.round(centerY - cropSize / 2), 0, height - cropSize);
+
+  try {
+    await sharp(sample.image.scanPath)
+      .rotate()
+      .extract({ left, top, width: cropSize, height: cropSize })
+      .jpeg({ quality: 92, mozjpeg: true })
+      .toFile(outputPath);
+    const detections = await detectFaces(outputPath);
+    return detections.length === 1
+      && euclideanDistance(detections[0]!.descriptor, centroid) <= threshold + 0.08;
+  } catch {
+    await rm(outputPath, { force: true });
+    return false;
   }
 }
 

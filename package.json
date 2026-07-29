@@ -25,6 +25,7 @@
     "test:check": "tsx scripts/test-check.ts",
     "test:download": "tsx scripts/test-download.ts",
     "test:facereel": "tsx scripts/test-facereel.ts",
+    "campaign:run": "tsx scripts/run-campaign.ts",
     "test": "DATABASE_URL=postgresql://test:test@127.0.0.1:5432/test node --import tsx --test tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:nvm": "zsh -lc 'unset npm_config_prefix && source ~/.nvm/nvm.sh && nvm use && npm run typecheck'"

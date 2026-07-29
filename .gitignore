@@ -13,3 +13,6 @@ dist
 *.log
 .vercel
 .env*
+/marketing/campaign-state.json
+/marketing/campaign.lock
+/marketing/output/
