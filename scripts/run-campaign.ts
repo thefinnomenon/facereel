@@ -258,7 +258,7 @@ async function startMediaServer(directory: string): Promise<{ server: Server; po
       "Content-Length": String(bytes.length),
       "Cache-Control": "public, max-age=3600",
     });
-    response.end(bytes);
+    response.end(request.method === "HEAD" ? undefined : bytes);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -267,21 +267,48 @@ async function startMediaServer(directory: string): Promise<{ server: Server; po
 }
 
 async function startTunnel(port: number): Promise<{ process: ChildProcess; url: string }> {
-  const process = spawn("cloudflared", [
-    "tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${port}`,
-  ], { stdio: ["ignore", "ignore", "pipe"] });
+  const process = spawn("ssh", [
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "ServerAliveInterval=30",
+    "-R", `80:127.0.0.1:${port}`,
+    "nokey@localhost.run",
+  ], { stdio: ["ignore", "pipe", "pipe"] });
 
   const url = await new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Cloudflare tunnel did not start.")), 30_000);
-    process.once("error", reject);
-    process.stderr?.on("data", (chunk: Buffer) => {
-      const match = chunk.toString("utf8").match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-      if (!match) return;
+    const timeout = setTimeout(() => reject(new Error("Media tunnel did not start.")), 60_000);
+    const inspectOutput = (chunk: Buffer) => {
+      const publicUrl = chunk.toString("utf8")
+        .match(/https:\/\/[a-z0-9-]+\.lhr\.life/)?.[0];
+      if (!publicUrl) return;
       clearTimeout(timeout);
-      resolve(match[0]);
+      resolve(publicUrl);
+    };
+    process.once("error", reject);
+    process.once("exit", (code) => {
+      reject(new Error(`Media tunnel exited with code ${String(code)}.`));
     });
+    process.stdout?.on("data", inspectOutput);
+    process.stderr?.on("data", inspectOutput);
   });
+  await waitForPublicMedia(`${url}/instagram-reel.mp4`);
   return { process, url };
+}
+
+async function waitForPublicMedia(url: string): Promise<void> {
+  let lastStatus = "unreachable";
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    try {
+      await run("curl", [
+        "--silent", "--show-error", "--fail",
+        "--head", "--max-time", "10", url,
+      ]);
+      return;
+    } catch (error) {
+      lastStatus = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error(`Media tunnel did not serve the Reel: ${lastStatus}`);
 }
 
 async function createContainer(input: {
