@@ -2,6 +2,7 @@ import "dotenv/config";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import {
+  copyFile,
   mkdir,
   open,
   readFile,
@@ -11,7 +12,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
 import {
   findMostFrequentFace,
   generateFaceReel,
@@ -31,9 +31,16 @@ const dryRun = process.argv.includes("--dry-run");
 
 type Creator = {
   username: string;
+  instagramUserId: string;
   targetFace?: string;
   caption?: string;
   enabled?: boolean;
+};
+
+type InstagramUserTag = {
+  user_id: string;
+  x: number;
+  y: number;
 };
 
 type Config = {
@@ -120,6 +127,7 @@ try {
             igUserId,
             mediaType: "STORIES",
             videoUrl: `${tunnel.url}/instagram-story.mp4`,
+            userTags: [storyMention(creator)],
           });
           await saveState(state);
           await waitForContainer(creatorState.storyContainerId, accessToken);
@@ -191,13 +199,12 @@ async function renderCreator(
     onProgress: (event) => progress(event.stage, event.progress),
   });
 
-  await prepareInstagramVideos(result.videoPath, outputDir, creator.username);
+  await prepareInstagramVideos(result.videoPath, outputDir);
 }
 
 async function prepareInstagramVideos(
   sourceVideo: string,
   outputDir: string,
-  username: string,
 ): Promise<void> {
   const sourceDuration = Number.parseFloat((await run("ffprobe", [
     "-v", "error",
@@ -208,7 +215,6 @@ async function prepareInstagramVideos(
   const duration = Math.max(3.1, sourceDuration);
   const reelPath = path.join(outputDir, "instagram-reel.mp4");
   const storyPath = path.join(outputDir, "instagram-story.mp4");
-  const overlayPath = path.join(outputDir, "story-overlay.png");
 
   await run("ffmpeg", [
     "-y", "-hide_banner", "-loglevel", "warning",
@@ -221,24 +227,7 @@ async function prepareInstagramVideos(
     "-shortest", reelPath,
   ]);
 
-  await sharp(Buffer.from(`
-    <svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
-      <rect x="100" y="130" width="880" height="170" rx="70" fill="rgba(0,0,0,.6)"/>
-      <text x="540" y="205" text-anchor="middle" font-family="Arial"
-        font-size="38" font-weight="700" fill="white">TODAY'S FACEREEL</text>
-      <text x="540" y="270" text-anchor="middle" font-family="Arial"
-        font-size="58" font-weight="800" fill="#FFF7EE">@${username}</text>
-    </svg>
-  `)).png().toFile(overlayPath);
-
-  await run("ffmpeg", [
-    "-y", "-hide_banner", "-loglevel", "warning",
-    "-i", reelPath, "-i", overlayPath,
-    "-filter_complex", "[0:v][1:v]overlay=0:0[v]",
-    "-map", "[v]", "-map", "0:a:0",
-    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30",
-    "-movflags", "+faststart", "-c:a", "copy", "-shortest", storyPath,
-  ]);
+  await copyFile(reelPath, storyPath);
 }
 
 async function startMediaServer(directory: string): Promise<{ server: Server; port: number }> {
@@ -317,11 +306,13 @@ async function createContainer(input: {
   mediaType: "REELS" | "STORIES";
   videoUrl: string;
   caption?: string;
+  userTags?: InstagramUserTag[];
 }): Promise<string> {
   const body = new URLSearchParams({
     media_type: input.mediaType,
     video_url: input.videoUrl,
     ...(input.caption ? { caption: input.caption, share_to_feed: "true" } : {}),
+    ...(input.userTags?.length ? { user_tags: JSON.stringify(input.userTags) } : {}),
   });
   const result = await graphRequest(
     `/${input.igUserId}/media`,
@@ -329,6 +320,17 @@ async function createContainer(input: {
     { method: "POST", body },
   );
   return stringField(result, "id");
+}
+
+function storyMention(creator: Creator): InstagramUserTag {
+  if (!/^\d+$/.test(creator.instagramUserId)) {
+    throw new Error(`@${creator.username} needs a numeric instagramUserId in campaign.json.`);
+  }
+  return {
+    user_id: creator.instagramUserId,
+    x: 0.5,
+    y: 0.13,
+  };
 }
 
 async function waitForContainer(containerId: string, accessToken: string): Promise<void> {

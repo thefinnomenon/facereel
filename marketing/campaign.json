@@ -2,7 +2,8 @@
   "captionTemplate": "@{username} — we turned your entire Instagram history into one perfectly aligned FaceReel.\n\nMade with FaceReel.net",
   "creators": [
     {
-      "username": "cristiano"
+      "username": "cristiano",
+      "instagramUserId": "173560420"
     }
   ]
 }
