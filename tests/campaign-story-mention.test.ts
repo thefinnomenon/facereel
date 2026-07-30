@@ -24,16 +24,21 @@ test("campaign contains 1,000 unique valid creator usernames", () => {
   assert.match(campaign.creators[0]?.instagramUserId ?? "", /^\d+$/);
 });
 
-test("Story containers serialize creator IDs as positioned user tags", () => {
-  assert.match(runner, /getInstagramProfileIdentity\(creator\.username\)/);
+test("Story containers serialize creator usernames as positioned user tags", () => {
   assert.match(
     runner,
-    /mediaType: "STORIES"[\s\S]*userTags: \[storyMention\(creator\.username, creatorState\.instagramUserId\)\]/,
+    /mediaType: "STORIES"[\s\S]*userTags: \[storyMention\(creator\.username\)\]/,
   );
   assert.match(runner, /user_tags: JSON\.stringify\(input\.userTags\)/);
-  assert.match(runner, /user_id: instagramUserId/);
+  assert.match(runner, /username,/);
   assert.match(runner, /x: 0\.5/);
   assert.match(runner, /y: 0\.13/);
+});
+
+test("campaign publishing uses Facebook Login credentials and Graph host", () => {
+  assert.match(runner, /requiredEnv\("INSTAGRAM_PAGE_ACCESS_TOKEN"\)/);
+  assert.match(runner, /requiredEnv\("INSTAGRAM_BUSINESS_ACCOUNT_ID"\)/);
+  assert.match(runner, /https:\/\/graph\.facebook\.com/);
 });
 
 test("Story video has no baked-in mention banner", () => {

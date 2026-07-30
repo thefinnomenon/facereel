@@ -337,6 +337,7 @@ export async function findMostFrequentFace(input: {
   const threshold = input.matchThreshold
     ?? numberFromEnv("FACEREEL_MATCH_THRESHOLD", DEFAULT_MATCH_THRESHOLD);
   const samples: FrequentFaceSample[] = [];
+  let firstDetectionError: unknown;
 
   for (let index = 0; index < input.scanImages.length; index += 1) {
     const image = input.scanImages[index]!;
@@ -345,7 +346,8 @@ export async function findMostFrequentFace(input: {
       for (const detection of detections) {
         samples.push({ image, detection, faceCount: detections.length });
       }
-    } catch {
+    } catch (error) {
+      firstDetectionError ??= error;
       // A corrupt or unsupported photo should not prevent profile-wide selection.
     } finally {
       input.onProgress?.({
@@ -358,6 +360,12 @@ export async function findMostFrequentFace(input: {
   }
 
   if (samples.length === 0) {
+    if (firstDetectionError instanceof Error) {
+      throw new Error(
+        `Face detection failed for every profile image: ${firstDetectionError.message}`,
+        { cause: firstDetectionError },
+      );
+    }
     throw new Error("No detectable faces were found in this Instagram profile.");
   }
 

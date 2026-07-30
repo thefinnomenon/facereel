@@ -20,7 +20,6 @@ import {
   buildInstagramMediaManifest,
   downloadScanImages,
   downloadSourceImages,
-  getInstagramProfileIdentity,
 } from "../packages/worker/src/instagram.ts";
 import { sanitizeInstagramUsername } from "../packages/worker/src/validation.ts";
 
@@ -39,7 +38,7 @@ type Creator = {
 };
 
 type InstagramUserTag = {
-  user_id: string;
+  username: string;
   x: number;
   y: number;
 };
@@ -96,11 +95,8 @@ try {
       console.log(`Preview ready: ${path.join(outputDir, "instagram-reel.mp4")}`);
       console.log("Run without --dry-run to post it.");
     } else {
-      const accessToken = requiredEnv("INSTAGRAM_PUBLISH_ACCESS_TOKEN");
-      const igUserId = requiredEnv("INSTAGRAM_PUBLISH_USER_ID");
-      creatorState.instagramUserId ??= creator.instagramUserId
-        ?? (await getInstagramProfileIdentity(creator.username)).userId;
-      await saveState(state);
+      const accessToken = requiredEnv("INSTAGRAM_PAGE_ACCESS_TOKEN");
+      const igUserId = requiredEnv("INSTAGRAM_BUSINESS_ACCOUNT_ID");
       const mediaServer = await startMediaServer(outputDir);
       const tunnel = await startTunnel(mediaServer.port);
 
@@ -132,7 +128,7 @@ try {
             igUserId,
             mediaType: "STORIES",
             videoUrl: `${tunnel.url}/instagram-story.mp4`,
-            userTags: [storyMention(creator.username, creatorState.instagramUserId)],
+            userTags: [storyMention(creator.username)],
           });
           await saveState(state);
           await waitForContainer(creatorState.storyContainerId, accessToken);
@@ -268,41 +264,28 @@ async function startTunnel(port: number): Promise<{ process: ChildProcess; url: 
     "nokey@localhost.run",
   ], { stdio: ["ignore", "pipe", "pipe"] });
 
-  const url = await new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Media tunnel did not start.")), 60_000);
-    const inspectOutput = (chunk: Buffer) => {
-      const publicUrl = chunk.toString("utf8")
-        .match(/https:\/\/[a-z0-9-]+\.lhr\.life/)?.[0];
-      if (!publicUrl) return;
-      clearTimeout(timeout);
-      resolve(publicUrl);
-    };
-    process.once("error", reject);
-    process.once("exit", (code) => {
-      reject(new Error(`Media tunnel exited with code ${String(code)}.`));
+  try {
+    const url = await new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Media tunnel did not start.")), 60_000);
+      const inspectOutput = (chunk: Buffer) => {
+        const publicUrl = chunk.toString("utf8")
+          .match(/https:\/\/[a-z0-9-]+\.lhr\.life/)?.[0];
+        if (!publicUrl) return;
+        clearTimeout(timeout);
+        resolve(publicUrl);
+      };
+      process.once("error", reject);
+      process.once("exit", (code) => {
+        reject(new Error(`Media tunnel exited with code ${String(code)}.`));
+      });
+      process.stdout?.on("data", inspectOutput);
+      process.stderr?.on("data", inspectOutput);
     });
-    process.stdout?.on("data", inspectOutput);
-    process.stderr?.on("data", inspectOutput);
-  });
-  await waitForPublicMedia(`${url}/instagram-reel.mp4`);
-  return { process, url };
-}
-
-async function waitForPublicMedia(url: string): Promise<void> {
-  let lastStatus = "unreachable";
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    try {
-      await run("curl", [
-        "--silent", "--show-error", "--fail",
-        "--head", "--max-time", "10", url,
-      ]);
-      return;
-    } catch (error) {
-      lastStatus = error instanceof Error ? error.message : String(error);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    return { process, url };
+  } catch (error) {
+    process.kill();
+    throw error;
   }
-  throw new Error(`Media tunnel did not serve the Reel: ${lastStatus}`);
 }
 
 async function createContainer(input: {
@@ -327,12 +310,9 @@ async function createContainer(input: {
   return stringField(result, "id");
 }
 
-function storyMention(username: string, instagramUserId: string): InstagramUserTag {
-  if (!/^\d+$/.test(instagramUserId)) {
-    throw new Error(`@${username} needs a numeric Instagram user ID.`);
-  }
+function storyMention(username: string): InstagramUserTag {
   return {
-    user_id: instagramUserId,
+    username,
     x: 0.5,
     y: 0.13,
   };
@@ -372,7 +352,7 @@ async function graphRequest(
   init: RequestInit = {},
 ): Promise<Record<string, unknown>> {
   const response = await fetch(
-    `https://graph.instagram.com/${GRAPH_API_VERSION}${pathname}`,
+    `https://graph.facebook.com/${GRAPH_API_VERSION}${pathname}`,
     {
       ...init,
       headers: {
