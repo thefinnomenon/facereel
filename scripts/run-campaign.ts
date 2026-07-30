@@ -20,6 +20,7 @@ import {
   buildInstagramMediaManifest,
   downloadScanImages,
   downloadSourceImages,
+  getInstagramProfileIdentity,
 } from "../packages/worker/src/instagram.ts";
 import { sanitizeInstagramUsername } from "../packages/worker/src/validation.ts";
 
@@ -31,7 +32,7 @@ const dryRun = process.argv.includes("--dry-run");
 
 type Creator = {
   username: string;
-  instagramUserId: string;
+  instagramUserId?: string;
   targetFace?: string;
   caption?: string;
   enabled?: boolean;
@@ -55,6 +56,7 @@ type CreatorState = {
   reelMediaId?: string;
   storyContainerId?: string;
   storyMediaId?: string;
+  instagramUserId?: string;
 };
 
 type State = { creators: Record<string, CreatorState> };
@@ -96,6 +98,9 @@ try {
     } else {
       const accessToken = requiredEnv("INSTAGRAM_PUBLISH_ACCESS_TOKEN");
       const igUserId = requiredEnv("INSTAGRAM_PUBLISH_USER_ID");
+      creatorState.instagramUserId ??= creator.instagramUserId
+        ?? (await getInstagramProfileIdentity(creator.username)).userId;
+      await saveState(state);
       const mediaServer = await startMediaServer(outputDir);
       const tunnel = await startTunnel(mediaServer.port);
 
@@ -127,7 +132,7 @@ try {
             igUserId,
             mediaType: "STORIES",
             videoUrl: `${tunnel.url}/instagram-story.mp4`,
-            userTags: [storyMention(creator)],
+            userTags: [storyMention(creator.username, creatorState.instagramUserId)],
           });
           await saveState(state);
           await waitForContainer(creatorState.storyContainerId, accessToken);
@@ -322,12 +327,12 @@ async function createContainer(input: {
   return stringField(result, "id");
 }
 
-function storyMention(creator: Creator): InstagramUserTag {
-  if (!/^\d+$/.test(creator.instagramUserId)) {
-    throw new Error(`@${creator.username} needs a numeric instagramUserId in campaign.json.`);
+function storyMention(username: string, instagramUserId: string): InstagramUserTag {
+  if (!/^\d+$/.test(instagramUserId)) {
+    throw new Error(`@${username} needs a numeric Instagram user ID.`);
   }
   return {
-    user_id: creator.instagramUserId,
+    user_id: instagramUserId,
     x: 0.5,
     y: 0.13,
   };

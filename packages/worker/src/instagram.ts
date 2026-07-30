@@ -19,6 +19,11 @@ export type InstagramCheckResult = {
   errors: string[];
 };
 
+export type InstagramProfileIdentity = {
+  username: string;
+  userId: string;
+};
+
 export type InstagramMediaItem = {
   id: string;
   scanUrl: string;
@@ -69,6 +74,22 @@ export async function checkInstagramProfile(usernameInput: string): Promise<Inst
     estimated_photo_count: numberValue(timelineMedia?.count),
     warnings: ["RapidAPI profile check validates visibility only; media is counted during job processing."],
     errors: []
+  };
+}
+
+export async function getInstagramProfileIdentity(
+  usernameInput: string,
+): Promise<InstagramProfileIdentity> {
+  const username = sanitizeInstagramUsername(usernameInput);
+  const payload = await rapidApiPost("profile", { username });
+  const result = objectValue(payload.result);
+  const userId = String(result?.id ?? result?.pk ?? "");
+  if (!result || !/^\d+$/.test(userId)) {
+    throw new Error(`Could not resolve a numeric Instagram user ID for @${username}.`);
+  }
+  return {
+    username: String(result.username || username),
+    userId,
   };
 }
 
