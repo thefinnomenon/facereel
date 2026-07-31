@@ -35,4 +35,22 @@ npm run dispatch:reconcile
 npm run jobs:recover
 ```
 
+## Instagram campaign publishing
+
+Configure `INSTAGRAM_PAGE_ACCESS_TOKEN` with a Facebook Page access token and
+`INSTAGRAM_BUSINESS_ACCOUNT_ID` with the connected Instagram Professional
+account ID. Set `META_APP_ID` and `META_APP_SECRET` for the app used to issue the
+token. Keep credentials in an untracked `.env` file or encrypted hosting
+configuration.
+
+Check the configured token before publishing:
+
+```bash
+npm run instagram:token:check
+```
+
+Use `marketing/campaign.json` to configure public creator targets and captions.
+The campaign runner keeps local queue state, locks, and generated media in
+ignored files under `marketing/`.
+
 See [docs/production-architecture.md](docs/production-architecture.md) for the repository audit, failure model, environment variables, deployment sequence, IAM, retention, sizing, and rollback commands.

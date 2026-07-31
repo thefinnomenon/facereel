@@ -26,6 +26,7 @@
     "test:download": "tsx scripts/test-download.ts",
     "test:facereel": "tsx scripts/test-facereel.ts",
     "campaign:run": "mise x node@22.16.0 -- tsx scripts/run-campaign.ts",
+    "instagram:token:check": "tsx scripts/instagram-page-token.ts --check",
     "test": "DATABASE_URL=postgresql://test:test@127.0.0.1:5432/test node --import tsx --test tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:nvm": "zsh -lc 'unset npm_config_prefix && source ~/.nvm/nvm.sh && nvm use && npm run typecheck'"
